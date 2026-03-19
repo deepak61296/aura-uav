@@ -1,0 +1,122 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+:root {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  @apply bg-[#f8fafc] text-slate-900 antialiased overflow-hidden;
+}
+
+/* Premium shadow for floating glass elements */
+.shadow-card {
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.02),
+    0 1px 2px rgba(0,0,0,0.04),
+    0 8px 24px -4px rgba(0,0,0,0.08),
+    0 20px 48px -12px rgba(0,0,0,0.06);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-slate-200 rounded-full; }
+
+/* Leaflet */
+.leaflet-container { background: #f8fafc !important; }
+.leaflet-bar { border: none !important; box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important; }
+
+/* Override leaflet default divIcon styles */
+.leaflet-user-icon { background: none !important; border: none !important; }
+
+/* ============ USER DOT ============ */
+.user-dot-wrapper {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+
+.user-dot {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px; height: 12px;
+  background: #111;
+  border-radius: 50%;
+  border: 2.5px solid #fff;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.08),
+    0 2px 8px rgba(0,0,0,0.25);
+  z-index: 2;
+}
+
+.user-dot-pulse {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.10);
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  z-index: 1;
+}
+
+@keyframes pulse-ring {
+  0%   { transform: translate(-50%, -50%) scale(0.7); opacity: 1; }
+  70%  { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+}
+
+/* ============ DRONE ICON ============ */
+@keyframes drone-hover {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+.drone-leaflet-icon {
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3));
+  animation: drone-hover 3s ease-in-out infinite;
+  transition: transform 0.3s ease;
+}
+.drone-leaflet-icon:hover {
+  transform: scale(1.15) !important;
+}
+
+/* ============ ANIMATED PATH ============ */
+@keyframes dash-flow {
+  to { stroke-dashoffset: -30; }
+}
+.animated-path {
+  stroke-dashoffset: 0;
+  animation: dash-flow 0.8s linear infinite !important;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.12));
+}
+
+/* Slider shimmer */
+@keyframes shimmer-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.slider-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 30%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+  animation: shimmer-slide 2.5s ease-in-out infinite;
+  pointer-events: none;
+  border-radius: 1rem;
+}
+
+/* Subtle gradient overlay on map for depth */
+.map-gradient-overlay {
+  background: linear-gradient(
+    to bottom,
+    rgba(248, 250, 252, 0.6) 0%,
+    transparent 15%,
+    transparent 75%,
+    rgba(248, 250, 252, 0.4) 100%
+  );
+  pointer-events: none;
+}
