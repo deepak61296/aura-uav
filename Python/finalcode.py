@@ -1,169 +1,140 @@
-import cv2
+import collections
+import collections.abc
+import math
+import os
 import threading
 import time
-import math
+
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Mapping = collections.abc.Mapping
+collections.Sequence = collections.abc.Sequence
+
 import requests
-from flask import Flask, Response, jsonify
+from flask import Flask, jsonify
 from flask_cors import CORS
-from dronekit import connect, VehicleMode, LocationGlobalRelative
+from dronekit import LocationGlobalRelative, VehicleMode, connect
 from pymavlink import mavutil
 
-# ===============================================================
-#  DELIVERY CONFIG
-# ===============================================================
-DELIVERY_LAT      = 30.7685666   # target drop-off latitude
-DELIVERY_LON      = 76.5768448  # target drop-off longitude
-TAKEOFF_ALTITUDE  = 5.0          # metres — cruise/travel altitude
-DESCENT_ALTITUDE  = 2.0          # metres — hover altitude at delivery point
-WAYPOINT_RADIUS   = 2.0          # metres — "close enough" to waypoint
+DRONE_ID = os.getenv("DRONE_ID", "DRONE001")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:5000")
+API_KEY = os.getenv("API_KEY", "SUPER_SECRET_KEY")
+VEHICLE_CONNECTION = os.getenv("VEHICLE_CONNECTION", "udp:127.0.0.1:14550")
+POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
+TELEMETRY_PUSH_INTERVAL = float(os.getenv("TELEMETRY_PUSH_INTERVAL", "1"))
+TAKEOFF_ALTITUDE = float(os.getenv("TAKEOFF_ALTITUDE", "5"))
+DESCENT_ALTITUDE = float(os.getenv("DESCENT_ALTITUDE", "2"))
+WAYPOINT_RADIUS = float(os.getenv("WAYPOINT_RADIUS", "2"))
 
-LANDING_LAT       = 30.7685839   # predefined landing pad latitude
-LANDING_LON       = 76.5770003   # predefined landing pad longitude
+MISSION_API_URL = f"{API_BASE_URL}/drone/{DRONE_ID}"
+RESET_API_URL = f"{API_BASE_URL}/drone/reset"
+TELEMETRY_API_URL = f"{API_BASE_URL}/telemetry"
 
-DRONE_ID          = "DRONE001"
-MISSION_API_URL   = f"https://aura-delivery-1.onrender.com/drone/{DRONE_ID}"
-RESET_API_URL     = "https://aura-delivery-1.onrender.com/drone/reset"
-POLL_INTERVAL     = 5            # seconds between API checks
-
-# ===============================================================
-#  RC OVERRIDE CONFIG
-# ===============================================================
-RC_OVERRIDE_THRESHOLD = 100               # µs deviation from neutral 1500
-RC_WATCH_CHANNELS     = ["1", "2", "4"]  # Roll, Pitch, Yaw
-
-# ===============================================================
-#  VIDEO STREAMS
-# ===============================================================
-stream_url_1   = "rtsp://192.168.15.194:8554/cam"
-stream_url_2   = "rtsp://192.168.15.237:8555/cam"
-latest_frame_1 = None
-latest_frame_2 = None
-
-# ===============================================================
-#  GLOBAL TELEMETRY
-# ===============================================================
 current_pitch = current_roll = current_yaw = 0.0
-current_altitude  = 0.0
-current_voltage   = current_current = current_level = 0
-current_latitude  = current_longitude = None
-
-# ===============================================================
-#  MISSION STATE
-# ===============================================================
-# idle | starting | taking_off | flying_to_delivery
-# descending | climbing | returning_home | landing | complete | aborted
+current_altitude = None
+current_voltage = current_current = current_level = None
+current_latitude = current_longitude = None
 mission_state = "idle"
-mission_lock  = threading.Lock()
-servo_state   = "idle"
-
+servo_state = "idle"
 home_lat = None
 home_lon = None
+current_target = {"lat": None, "lng": None, "alt": None}
+mission_lock = threading.Lock()
 
-# ===============================================================
-#  FLASK
-# ===============================================================
 app = Flask(__name__)
 CORS(app)
 
-# ===============================================================
-#  DRONE CONNECTION
-# ===============================================================
-print("🔌 Connecting to drone over WiFi (UDP 14550)...")
-vehicle = connect('udp:0.0.0.0:14550', wait_ready=True)
+print(f"[INFO] Connecting to vehicle on {VEHICLE_CONNECTION}")
+vehicle = connect(VEHICLE_CONNECTION, wait_ready=True, timeout=120)
 
-print("🛠️  Setting mode to STABILIZE...")
-vehicle.mode = VehicleMode("STABILIZE")
-while vehicle.mode.name != "STABILIZE":
-    print("   Waiting for STABILIZE...")
-    time.sleep(1)
-print("✅ Connected and in STABILIZE\n")
 
-# ===============================================================
-#  SERVO INIT — servo starts ON (2000 µs) at boot
-# ===============================================================
+def api_headers():
+    return {"x-api-key": API_KEY, "Content-Type": "application/json"}
+
+
 def set_servo(servo_num, pwm_value):
-    print(f"   👉 Servo {servo_num} → {pwm_value} µs")
-    vehicle._master.mav.command_long_send(
-        vehicle._master.target_system,
-        vehicle._master.target_component,
-        mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
-        0,
-        servo_num, pwm_value,
-        0, 0, 0, 0, 0
-    )
+    try:
+        print(f"[SERVO] {servo_num} -> {pwm_value}")
+        vehicle._master.mav.command_long_send(
+            vehicle._master.target_system,
+            vehicle._master.target_component,
+            mavutil.mavlink.MAV_CMD_DO_SET_SERVO,
+            0,
+            servo_num,
+            pwm_value,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    except Exception as exc:
+        print(f"[SERVO] command failed: {exc}")
 
-print("🔧 Initialising servo → ON (2000 µs)...")
-set_servo(5, 2000)   # servo starts ON at boot
-servo_state = "on"
 
-# ===============================================================
-#  ATTRIBUTE LISTENERS
-# ===============================================================
-def attitude_listener(self, attr_name, value):
+def attitude_listener(_, __, value):
     global current_pitch, current_roll, current_yaw
     current_pitch = round(math.degrees(value.pitch), 2)
-    current_roll  = round(math.degrees(value.roll),  2)
-    current_yaw   = round(math.degrees(value.yaw),   2)
+    current_roll = round(math.degrees(value.roll), 2)
+    current_yaw = round(math.degrees(value.yaw), 2)
 
-def location_listener(self, attr_name, value):
+
+def location_listener(_, __, value):
     global current_altitude, current_latitude, current_longitude
-    current_altitude  = round(value.alt, 2) if value.alt else None
-    current_latitude  = round(value.lat, 6) if value.lat else None
-    current_longitude = round(value.lon, 6) if value.lon else None
+    current_altitude = round(value.alt, 2) if value.alt is not None else None
+    current_latitude = round(value.lat, 7) if value.lat is not None else None
+    current_longitude = round(value.lon, 7) if value.lon is not None else None
 
-def battery_listener(self, attr_name, value):
+
+def battery_listener(_, __, value):
     global current_voltage, current_current, current_level
-    current_voltage = round(value.voltage, 2) if value.voltage          else None
-    current_current = round(value.current, 2) if value.current          else None
-    current_level   = value.level             if value.level is not None else None
-
-vehicle.add_attribute_listener('attitude',                        attitude_listener)
-vehicle.add_attribute_listener('location.global_relative_frame', location_listener)
-vehicle.add_attribute_listener('battery',                        battery_listener)
+    current_voltage = round(value.voltage, 2) if value.voltage is not None else None
+    current_current = round(value.current, 2) if value.current is not None else None
+    current_level = value.level if value.level is not None else None
 
 
-# ===============================================================
-#  HELPERS
-# ===============================================================
-def is_rc_active():
-    """True if pilot is moving any stick beyond threshold."""
-    try:
-        for ch in RC_WATCH_CHANNELS:
-            pwm = vehicle.channels.get(ch)
-            if pwm and abs(pwm - 1500) > RC_OVERRIDE_THRESHOLD:
-                return True
-    except Exception:
-        pass
-    return False
+vehicle.add_attribute_listener("attitude", attitude_listener)
+vehicle.add_attribute_listener("location.global_relative_frame", location_listener)
+vehicle.add_attribute_listener("battery", battery_listener)
+
+try:
+    vehicle.mode = VehicleMode("STABILIZE")
+except Exception as exc:
+    print(f"[MODE] failed to set initial STABILIZE: {exc}")
+
+set_servo(5, 2000)
+servo_state = "on"
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """Straight-line distance in metres between two GPS coords."""
-    R       = 6371000
-    phi1    = math.radians(lat1)
-    phi2    = math.radians(lat2)
-    dphi    = math.radians(lat2 - lat1)
+    radius = 6371000
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def is_rc_active():
+    try:
+        for channel in ("1", "2", "4"):
+            pwm = vehicle.channels.get(channel)
+            if pwm and abs(pwm - 1500) > 100:
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def abort_to_stabilize(reason="RC override"):
-    """Immediately give control back to pilot."""
     global mission_state
-    print(f"\n🕹️  {reason}")
-    print("   ⚠️  Switching to STABILIZE — pilot has full control")
-    vehicle.mode  = VehicleMode("STABILIZE")
+    print(f"[ABORT] {reason}")
+    vehicle.mode = VehicleMode("STABILIZE")
     mission_state = "aborted"
 
 
 def rc_safe_sleep(seconds, phase_name=""):
-    """
-    Sleep in 0.5s ticks, checking RC override each tick.
-    Returns True if completed safely, False if aborted.
-    """
-    ticks = max(1, int(seconds / 0.5))
-    for _ in range(ticks):
+    for _ in range(max(1, int(seconds / 0.5))):
         if is_rc_active():
             abort_to_stabilize(f"RC override during {phase_name}")
             return False
@@ -171,494 +142,297 @@ def rc_safe_sleep(seconds, phase_name=""):
     return True
 
 
-def fly_to_and_wait(lat, lon, alt, label="waypoint", timeout=180):
-    """
-    Command drone to GPS location + altitude and wait until it arrives.
-    Checks RC override every 0.5s.
-    Returns True on arrival, False on RC override or timeout.
-    """
-    target = LocationGlobalRelative(lat, lon, alt)
-    vehicle.simple_goto(target)
-    print(f"   ✈️  Flying to {label}  ({lat:.6f}, {lon:.6f})  alt={alt} m")
-
+def wait_for_mode(name, timeout=15):
     deadline = time.time() + timeout
+    while time.time() < deadline:
+        if vehicle.mode.name == name:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def fly_to_and_wait(lat, lon, alt, label, timeout=180):
+    vehicle.simple_goto(LocationGlobalRelative(lat, lon, alt))
+    print(f"[MISSION] Flying to {label}: {lat:.7f}, {lon:.7f} @ {alt}m")
+    deadline = time.time() + timeout
+
     while time.time() < deadline:
         if is_rc_active():
             abort_to_stabilize(f"RC override while flying to {label}")
             return False
-        cur_lat = current_latitude  or 0.0
-        cur_lon = current_longitude or 0.0
-        dist    = haversine_distance(cur_lat, cur_lon, lat, lon)
-        alt_now = current_altitude  or 0.0
-        print(f"   📍 Dist to {label}: {dist:.1f} m  |  Alt: {alt_now:.1f} m")
-        if dist <= WAYPOINT_RADIUS:
-            print(f"   ✅ Reached {label}")
-            return True
-        time.sleep(0.5)
 
-    print(f"   ⚠️  Timeout reaching {label}")
+        if current_latitude is not None and current_longitude is not None:
+            distance = haversine_distance(current_latitude, current_longitude, lat, lon)
+            altitude = current_altitude or 0.0
+            print(f"[MISSION] {label} distance={distance:.1f}m altitude={altitude:.1f}m")
+            if distance <= WAYPOINT_RADIUS:
+                return True
+
+        time.sleep(1)
+
+    print(f"[MISSION] Timed out before reaching {label}")
     return False
 
 
-def change_altitude_and_wait(new_alt, label="", timeout=20):
-    """
-    Command altitude change while holding current XY, wait until reached.
-    Returns True on success, False on RC override or timeout.
-    """
-    cur_lat = current_latitude  or 0.0
-    cur_lon = current_longitude or 0.0
-    print(f"   ↕️  {label or f'Changing altitude to {new_alt} m'}")
-    vehicle.simple_goto(LocationGlobalRelative(cur_lat, cur_lon, new_alt))
+def change_altitude_and_wait(new_alt, label, timeout=30):
+    if current_latitude is None or current_longitude is None:
+        print(f"[MISSION] Cannot change altitude for {label}: no GPS fix")
+        return False
 
+    vehicle.simple_goto(LocationGlobalRelative(current_latitude, current_longitude, new_alt))
     deadline = time.time() + timeout
+
     while time.time() < deadline:
         if is_rc_active():
-            abort_to_stabilize(f"RC override during {label or 'altitude change'}")
+            abort_to_stabilize(f"RC override during {label}")
             return False
-        alt = current_altitude or 0.0
-        print(f"   ↕️  Alt: {alt:.1f} m  →  target: {new_alt} m")
-        if abs(alt - new_alt) <= 0.4:
-            print(f"   ✅ Altitude {new_alt} m reached")
+
+        altitude = current_altitude or 0.0
+        print(f"[MISSION] {label}: altitude={altitude:.1f}m target={new_alt:.1f}m")
+        if abs(altitude - new_alt) <= 0.4:
             return True
         time.sleep(0.5)
 
-    print(f"   ⚠️  Altitude change timeout")
+    print(f"[MISSION] Timed out during {label}")
     return False
 
 
-def wait_for_disarm(timeout=90):
-    """Wait for drone to land and auto-disarm. Checks RC override."""
-    global mission_state
+def wait_for_disarm(timeout=240):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if is_rc_active():
-            abort_to_stabilize("RC override during final landing")
-            return False
         if not vehicle.armed:
-            print("   ✅ Disarmed — drone on ground")
             return True
         time.sleep(1)
-    print("   ⚠️  Disarm timeout — check drone")
-    return True
+    return False
 
 
 def reset_api():
-    """
-    POST /drone/reset → sets booked=false, confirmed=false.
-    Called after delivery hover. Retries up to 3 times.
-    """
     for attempt in range(1, 4):
         try:
-            resp = requests.post(
+            response = requests.post(
                 RESET_API_URL,
                 json={"droneId": DRONE_ID},
-                timeout=5
+                headers=api_headers(),
+                timeout=5,
             )
-            if resp.status_code == 200:
-                print(f"[API] ✅ Reset done — booked=false, confirmed=false")
-                return
-            else:
-                print(f"[API] Reset returned {resp.status_code} (attempt {attempt})")
-        except Exception as e:
-            print(f"[API] Reset failed (attempt {attempt}): {e}")
+            if response.ok:
+                print("[API] Order reset")
+                return True
+            print(f"[API] Reset failed with {response.status_code} on attempt {attempt}")
+        except Exception as exc:
+            print(f"[API] Reset error on attempt {attempt}: {exc}")
         time.sleep(2)
-    print("[API] ⚠️  Could not reset after 3 attempts — reset manually if needed")
+    return False
 
 
-# ===============================================================
-#  AUTONOMOUS DELIVERY MISSION
-# ===============================================================
-def run_delivery_mission():
-    """
-    Full flight sequence:
+def push_telemetry_loop():
+    while True:
+        try:
+            if current_latitude is not None and current_longitude is not None:
+                response = requests.post(
+                    TELEMETRY_API_URL,
+                    json={
+                        "droneId": DRONE_ID,
+                        "lat": current_latitude,
+                        "lon": current_longitude,
+                        "alt": current_altitude,
+                    },
+                    headers=api_headers(),
+                    timeout=5,
+                )
+                if not response.ok:
+                    print(f"[API] Telemetry push failed: {response.status_code} {response.text}")
+        except Exception as exc:
+            print(f"[API] Telemetry push error: {exc}")
+        time.sleep(TELEMETRY_PUSH_INTERVAL)
 
-      ① Takeoff to 5 m
-      ② Fly to delivery point  (DELIVERY_LAT, DELIVERY_LON)  at 5 m
-      ③ Descend to 2 m  →  servo OFF (1000 µs)  →  hover 2 s
-         → POST /reset  (booked=false, confirmed=false)
-      ④ Climb back to 5 m
-      ⑤ Fly back to home at 5 m
-      ⑥ Land & disarm → STABILIZE  →  servo back ON (2000 µs)
 
-    Servo default state: ON (2000 µs)
-    Servo active/delivery state: OFF (1000 µs)
-
-    RC input at ANY point instantly aborts to STABILIZE.
-    """
-    global mission_state, servo_state, home_lat, home_lon
+def run_delivery_mission(delivery_lat, delivery_lng, delivery_alt=None):
+    global mission_state, servo_state, home_lat, home_lon, current_target
 
     with mission_lock:
-
-        # ── 0. Pre-flight safety checks ────────────────────────────────
-        print("\n" + "="*55)
-        print("  🚁 DELIVERY MISSION STARTING")
-        print("="*55)
+        mission_state = "starting"
+        current_target = {"lat": delivery_lat, "lng": delivery_lng, "alt": delivery_alt}
+        print(f"[MISSION] Starting mission to {delivery_lat:.7f}, {delivery_lng:.7f}")
 
         if vehicle.armed:
-            print("⚠️  Already armed — mission aborted for safety")
+            print("[MISSION] Vehicle already armed, aborting new mission")
             mission_state = "idle"
             return
 
         if not vehicle.is_armable:
-            print("⚠️  Not armable (GPS lock? pre-arm checks?) — aborted")
+            print("[MISSION] Vehicle not armable")
             mission_state = "idle"
             return
 
-        # ── 1. Lock home position ───────────────────────────────────────
         home_lat = current_latitude
         home_lon = current_longitude
-        if not home_lat or not home_lon:
-            print("⚠️  No GPS fix — cannot store home, aborted")
+        if home_lat is None or home_lon is None:
+            print("[MISSION] No GPS fix for home position")
             mission_state = "idle"
             return
 
-        dist_total = haversine_distance(home_lat, home_lon, DELIVERY_LAT, DELIVERY_LON)
-        print(f"📌 Home:     {home_lat:.6f}, {home_lon:.6f}")
-        print(f"🎯 Delivery: {DELIVERY_LAT:.6f}, {DELIVERY_LON:.6f}")
-        print(f"📏 Distance: {dist_total:.1f} m\n")
-
-        # ── 2. Switch to GUIDED & arm ───────────────────────────────────
         vehicle.mode = VehicleMode("GUIDED")
-        time.sleep(1)
-
-        print("⚡ Arming motors...")
-        vehicle.armed = True
-        arm_timeout   = 15
-        while not vehicle.armed and arm_timeout > 0:
-            if is_rc_active():
-                abort_to_stabilize("RC override during arming")
-                return
-            time.sleep(1)
-            arm_timeout -= 1
-
-        if not vehicle.armed:
-            print("❌ Arming failed — aborted")
+        if not wait_for_mode("GUIDED"):
+            print("[MISSION] Failed to enter GUIDED")
             mission_state = "idle"
             return
 
-        # ── 3. ① Takeoff to 5 m ────────────────────────────────────────
-        mission_state = "taking_off"
-        print(f"\n📈 ① Taking off to {TAKEOFF_ALTITUDE} m...")
-        vehicle.simple_takeoff(TAKEOFF_ALTITUDE)
-
-        deadline = time.time() + 30
-        reached  = False
-        while time.time() < deadline:
-            if is_rc_active():
-                abort_to_stabilize("RC override during take-off")
-                return
-            alt = current_altitude or 0.0
-            print(f"   Alt: {alt:.1f} m  /  target: {TAKEOFF_ALTITUDE} m")
-            if alt >= TAKEOFF_ALTITUDE - 0.5:
-                reached = True
-                break
+        vehicle.armed = True
+        arm_deadline = time.time() + 20
+        while not vehicle.armed and time.time() < arm_deadline:
             time.sleep(0.5)
 
-        if not reached:
-            print("⚠️  Failed to reach takeoff altitude — landing")
-            vehicle.mode  = VehicleMode("LAND")
+        if not vehicle.armed:
+            print("[MISSION] Failed to arm")
+            mission_state = "idle"
+            return
+
+        mission_state = "taking_off"
+        vehicle.simple_takeoff(TAKEOFF_ALTITUDE)
+        climb_deadline = time.time() + 45
+        while time.time() < climb_deadline:
+            if is_rc_active():
+                abort_to_stabilize("RC override during takeoff")
+                return
+            altitude = current_altitude or 0.0
+            print(f"[MISSION] Takeoff altitude={altitude:.1f}m target={TAKEOFF_ALTITUDE:.1f}m")
+            if altitude >= TAKEOFF_ALTITUDE - 0.5:
+                break
+            time.sleep(1)
+        else:
+            print("[MISSION] Failed to reach takeoff altitude")
+            vehicle.mode = VehicleMode("LAND")
             mission_state = "landing"
             wait_for_disarm()
             mission_state = "idle"
             return
 
-        print(f"✅ Airborne at {current_altitude:.1f} m\n")
-
-        # ── 4. ② Fly to delivery point at 5 m ──────────────────────────
         mission_state = "flying_to_delivery"
-        print("🗺️  ② Flying to delivery point at 5 m...")
-        arrived = fly_to_and_wait(
-            DELIVERY_LAT, DELIVERY_LON, TAKEOFF_ALTITUDE,
-            label="delivery point", timeout=180
-        )
-        if not arrived:
+        if not fly_to_and_wait(delivery_lat, delivery_lng, TAKEOFF_ALTITUDE, "delivery point"):
             if mission_state != "aborted":
-                print("⚠️  Could not reach delivery — returning home")
+                vehicle.mode = VehicleMode("RTL")
                 mission_state = "returning_home"
-                fly_to_and_wait(home_lat, home_lon, TAKEOFF_ALTITUDE, label="home")
-                vehicle.mode  = VehicleMode("LAND")
-                mission_state = "landing"
-                wait_for_disarm()
-                mission_state = "idle"
+            wait_for_disarm()
+            mission_state = "idle"
             return
 
-        if not rc_safe_sleep(2, "hover at delivery 5 m"):
-            return
-
-        # ── 5. ③ Descend to 2 m ─────────────────────────────────────────
         mission_state = "descending"
-        print(f"\n⬇️  ③ Descending to {DESCENT_ALTITUDE} m...")
-        if not change_altitude_and_wait(DESCENT_ALTITUDE, label=f"descend to {DESCENT_ALTITUDE} m"):
+        if not change_altitude_and_wait(DESCENT_ALTITUDE, "delivery descent"):
             if mission_state != "aborted":
-                vehicle.mode  = VehicleMode("LAND")
-                mission_state = "landing"
-                wait_for_disarm()
-                mission_state = "idle"
+                vehicle.mode = VehicleMode("RTL")
+                mission_state = "returning_home"
+            wait_for_disarm()
+            mission_state = "idle"
             return
 
-        # Servo OFF (payload release) at delivery point
-        if is_rc_active():
-            abort_to_stabilize("RC override before servo")
-            return
-
-        print("   📦 Servo → OFF (1000 µs) — payload release")
-        servo_state   = "active"
-        mission_state = "servo_active"
-        set_servo(5, 1000)   # OFF
+        servo_state = "active"
+        set_servo(5, 1000)
         servo_state = "off"
-
-        print(f"   ⏸️  Hovering at {DESCENT_ALTITUDE} m...")
-        if not rc_safe_sleep(2, f"hover at {DESCENT_ALTITUDE} m"):
+        if not rc_safe_sleep(2, "payload drop"):
             return
 
-        # Reset API right after delivery hover
-        print("\n📡 Calling POST /reset → booked=false, confirmed=false...")
         reset_api()
 
-        # ── 6. ④ Climb back to 5 m ──────────────────────────────────────
         mission_state = "climbing"
-        print(f"\n⬆️  ④ Climbing back to {TAKEOFF_ALTITUDE} m...")
-        if not change_altitude_and_wait(TAKEOFF_ALTITUDE, label=f"climb to {TAKEOFF_ALTITUDE} m"):
+        if not change_altitude_and_wait(TAKEOFF_ALTITUDE, "post-drop climb"):
             if mission_state != "aborted":
-                vehicle.mode  = VehicleMode("LAND")
-                mission_state = "landing"
-                wait_for_disarm()
-                mission_state = "idle"
-            return
-
-        if not rc_safe_sleep(2, "hover after climb"):
-            return
-
-        # ── 7. ⑤ Return to home at 5 m ─────────────────────────────────
-        if is_rc_active():
-            abort_to_stabilize("RC override before RTH")
+                vehicle.mode = VehicleMode("RTL")
+                mission_state = "returning_home"
+            wait_for_disarm()
+            mission_state = "idle"
             return
 
         mission_state = "returning_home"
-        print(f"\n🏠 ⑤ Flying to landing pad at {TAKEOFF_ALTITUDE} m...")
-        print(f"   Landing pad: {LANDING_LAT:.6f}, {LANDING_LON:.6f}")
-        arrived_home = fly_to_and_wait(
-            LANDING_LAT, LANDING_LON, TAKEOFF_ALTITUDE,
-            label="landing pad", timeout=180
-        )
-        if not arrived_home:
-            if mission_state != "aborted":
-                print("⚠️  Could not reach landing pad — landing in place")
-                vehicle.mode  = VehicleMode("LAND")
-                mission_state = "landing"
-                wait_for_disarm()
-                mission_state = "idle"
-            return
-
-        if not rc_safe_sleep(2, "landing pad hover"):
-            return
-
-        # ── 8. ⑥ Land at landing pad ────────────────────────────────────
-        if is_rc_active():
-            abort_to_stabilize("RC override before landing")
-            return
-
-        mission_state = "landing"
-        print("\n🛬 ⑥ Landing at landing pad...")
-        vehicle.mode = VehicleMode("LAND")
+        vehicle.mode = VehicleMode("RTL")
         wait_for_disarm()
 
-        # Servo back ON after landing
-        mission_state = "complete"
-        vehicle.mode  = VehicleMode("STABILIZE")
-        print("   🔧 Servo → back ON (2000 µs)")
+        servo_state = "active"
         set_servo(5, 2000)
         servo_state = "on"
+        current_target = {"lat": delivery_lat, "lng": delivery_lng, "alt": delivery_alt}
+        mission_state = "complete"
+        print("[MISSION] Mission complete")
 
-        print("\n" + "="*55)
-        print("  ✅ DELIVERY MISSION COMPLETE")
-        print("="*55 + "\n")
 
-
-# ===============================================================
-#  API POLLING
-# ===============================================================
 def poll_mission_api():
-    global mission_state
-    print(f"🌐 API polling active — every {POLL_INTERVAL}s")
-    print(f"   {MISSION_API_URL}\n")
+    global mission_state, current_target
+    print(f"[INFO] Polling mission API: {MISSION_API_URL}")
 
     while True:
         try:
-            resp = requests.get(MISSION_API_URL, timeout=5)
-            if resp.status_code == 200:
-                data      = resp.json()
-                booked    = data.get("booked",    False)
-                confirmed = data.get("confirmed", False)
+            response = requests.get(MISSION_API_URL, headers={"x-api-key": API_KEY}, timeout=5)
+            if not response.ok:
+                print(f"[API] Mission poll returned {response.status_code}")
+                time.sleep(POLL_INTERVAL)
+                continue
 
-                print(f"[API] booked={booked}  confirmed={confirmed}  mission={mission_state}")
+            data = response.json()
+            booked = bool(data.get("booked"))
+            confirmed = bool(data.get("confirmed"))
+            delivery_lat = data.get("deliveryLat")
+            delivery_lng = data.get("deliveryLng")
+            delivery_alt = data.get("deliveryAlt")
 
-                if booked and confirmed and mission_state in ("idle", "complete", "aborted"):
-                    print("[API] 🟢 Order confirmed — launching mission automatically!")
-                    mission_state = "starting"
-                    threading.Thread(target=run_delivery_mission, daemon=True).start()
-            else:
-                print(f"[API] Status {resp.status_code}")
+            if delivery_lat is not None and delivery_lng is not None:
+                current_target = {"lat": delivery_lat, "lng": delivery_lng, "alt": delivery_alt}
 
-        except requests.exceptions.RequestException as e:
-            print(f"[API] Request error: {e}")
-        except Exception as e:
-            print(f"[API] Error: {e}")
+            print(
+                f"[API] booked={booked} confirmed={confirmed} "
+                f"target=({delivery_lat}, {delivery_lng}) mission={mission_state}"
+            )
+
+            ready = mission_state in ("idle", "complete", "aborted")
+            if booked and confirmed and ready:
+                if delivery_lat is None or delivery_lng is None:
+                    print("[API] Waiting for delivery coordinates before launch")
+                else:
+                    mission_state = "queued"
+                    threading.Thread(
+                        target=run_delivery_mission,
+                        args=(float(delivery_lat), float(delivery_lng), delivery_alt),
+                        daemon=True,
+                    ).start()
+        except Exception as exc:
+            print(f"[API] Mission poll error: {exc}")
 
         time.sleep(POLL_INTERVAL)
 
 
-# ===============================================================
-#  VIDEO CAPTURE
-# ===============================================================
-def capture_video(stream_url, camera_id):
-    global latest_frame_1, latest_frame_2
-    cap = cv2.VideoCapture(stream_url)
-    while True:
-        if not cap.isOpened():
-            print(f"[CAM{camera_id}] Reconnecting...")
-            cap.release()
-            cap = cv2.VideoCapture(stream_url)
-            time.sleep(2)
-            continue
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            cap.release()
-            cap = cv2.VideoCapture(stream_url)
-            time.sleep(2)
-            continue
-        resized = cv2.resize(frame, (640, 360))
-        if camera_id == 1:
-            latest_frame_1 = resized
-        else:
-            latest_frame_2 = resized
-        time.sleep(0.02)
-    cap.release()
-
-
-# ===============================================================
-#  FLASK ROUTES
-# ===============================================================
-@app.route('/video_feed')
-def video_feed():
-    def generate():
-        while True:
-            if latest_frame_1 is not None:
-                ret, buf = cv2.imencode('.jpg', latest_frame_1)
-                if ret:
-                    yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n'
-            else:
-                time.sleep(0.02)
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-@app.route('/video_feed2')
-def video_feed2():
-    def generate():
-        while True:
-            if latest_frame_2 is not None:
-                ret, buf = cv2.imencode('.jpg', latest_frame_2)
-                if ret:
-                    yield b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n'
-            else:
-                time.sleep(0.02)
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-@app.route('/telemetry')
+@app.route("/telemetry")
 def get_telemetry():
     return jsonify({
-        'attitude':  {'pitch': current_pitch, 'roll': current_roll, 'yaw': current_yaw},
-        'altitude':  current_altitude,
-        'battery':   {'voltage': current_voltage, 'current': current_current, 'level': current_level},
-        'gps':       {'latitude': current_latitude,  'longitude': current_longitude},
-        'home':      {'latitude': home_lat,           'longitude': home_lon},
-        'delivery':  {'latitude': DELIVERY_LAT,       'longitude': DELIVERY_LON},
-        'landing':   {'latitude': LANDING_LAT,        'longitude': LANDING_LON},
-        'armed':     vehicle.armed,
-        'mode':      vehicle.mode.name,
-        'servo':     servo_state,
-        'mission':   mission_state,
+        "attitude": {"pitch": current_pitch, "roll": current_roll, "yaw": current_yaw},
+        "altitude": current_altitude,
+        "battery": {"voltage": current_voltage, "current": current_current, "level": current_level},
+        "gps": {"latitude": current_latitude, "longitude": current_longitude},
+        "home": {"latitude": home_lat, "longitude": home_lon},
+        "delivery": current_target,
+        "armed": vehicle.armed,
+        "mode": vehicle.mode.name,
+        "servo": servo_state,
+        "mission": mission_state,
+        "apiBaseUrl": API_BASE_URL,
     })
 
 
-@app.route('/servo', methods=['POST'])
-def trigger_servo_route():
-    """Manually toggle servo OFF then back ON."""
-    def pulse():
-        global servo_state
-        servo_state = "active"
-        set_servo(5, 1000)   # OFF
-        time.sleep(1)
-        set_servo(5, 2000)   # back ON
-        servo_state = "on"
-    threading.Thread(target=pulse, daemon=True).start()
-    return jsonify({"message": "Servo triggered"})
-
-
-@app.route('/mission/abort', methods=['POST'])
+@app.route("/mission/abort", methods=["POST"])
 def abort_mission_route():
-    """Emergency abort — switches to STABILIZE immediately."""
-    abort_to_stabilize("Manual abort via ground station")
-    return jsonify({"message": "Mission aborted — STABILIZE active", "mission": mission_state})
+    abort_to_stabilize("Manual abort via Flask endpoint")
+    return jsonify({"message": "Mission aborted", "mission": mission_state})
 
 
-@app.route('/toggle-arm', methods=['PATCH'])
-def toggle_arm():
+if __name__ == "__main__":
     try:
-        if vehicle.armed:
-            vehicle.armed = False
-            return jsonify({"armed": False, "message": "Disarmed", "mode": vehicle.mode.name})
-        else:
-            vehicle.armed = True
-            t = 10
-            while not vehicle.armed and t > 0:
-                time.sleep(1); t -= 1
-            if vehicle.armed:
-                return jsonify({"armed": True,  "message": "Armed", "mode": vehicle.mode.name})
-            return jsonify({"armed": False, "message": "Arm failed"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        threading.Thread(target=poll_mission_api, daemon=True).start()
+        threading.Thread(target=push_telemetry_loop, daemon=True).start()
 
-
-@app.route('/arm', methods=['POST'])
-def arm_drone():
-    try:
-        vehicle.armed = True
-        return jsonify({"armed": vehicle.armed})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/disarm', methods=['POST'])
-def disarm_drone():
-    try:
-        vehicle.armed = False
-        return jsonify({"armed": vehicle.armed})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ===============================================================
-#  MAIN
-# ===============================================================
-if __name__ == '__main__':
-    try:
-        threading.Thread(target=capture_video,   args=(stream_url_1, 1), daemon=True).start()
-        threading.Thread(target=capture_video,   args=(stream_url_2, 2), daemon=True).start()
-        threading.Thread(target=poll_mission_api,                         daemon=True).start()
-
-        print("[INFO] Server    → http://0.0.0.0:5001")
-        print("[INFO] Cam 1     → /video_feed")
-        print("[INFO] Cam 2     → /video_feed2")
-        print("[INFO] Telemetry → /telemetry")
-        print("[INFO] Abort     → POST /mission/abort\n")
-
-        app.run(host='0.0.0.0', port=5001)
-
+        print("[INFO] Server    -> http://0.0.0.0:5001")
+        print("[INFO] Telemetry -> /telemetry")
+        print("[INFO] Abort     -> POST /mission/abort")
+        app.run(host="0.0.0.0", port=5001)
     except KeyboardInterrupt:
-        print("\n🛑 Interrupted → disarming...")
+        print("[INFO] Interrupted, disarming and closing vehicle")
         vehicle.armed = False
         time.sleep(2)
         vehicle.close()
-        print("🔒 Disconnected safely")

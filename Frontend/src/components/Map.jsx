@@ -1,10 +1,9 @@
-import { MapContainer, TileLayer, Marker, Polyline, useMap } from "react-leaflet"
+import { MapContainer, Marker, Polyline, TileLayer, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
 import DroneIcon from "../assets/icons/Drone_Icon.png"
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef } from "react"
 
-/* ================= ICON FIX ================= */
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -12,9 +11,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 })
 
-/* ================= ICONS ================= */
-
-// 🖤 User dot — black circle with pulsing ring
 const userDot = L.divIcon({
   className: "leaflet-user-icon",
   html: `
@@ -26,144 +22,106 @@ const userDot = L.divIcon({
   iconAnchor: [14, 14],
 })
 
-// 🚁 Drone icon (same as original working version)
 const dronePin = new L.Icon({
   iconUrl: DroneIcon,
   iconSize: [48, 48],
   iconAnchor: [24, 24],
 })
 
-/* ================= SMART RECENTER (Rapido-style) ================= */
+const positionsDiffer = (a, b) => {
+  if (!a || !b) return true
+  return Math.abs(a[0] - b[0]) > 0.0001 || Math.abs(a[1] - b[1]) > 0.0001
+}
+
 const RecenterMap = ({ dronePos, userPos, active }) => {
   const map = useMap()
   const followRef = useRef(true)
   const timerRef = useRef(null)
-  const prevActiveRef = useRef(active)
+  const lastCenteredUserRef = useRef(null)
+  const lastBoundsKeyRef = useRef(null)
 
-  const reframe = useCallback(() => {
-    if (active && dronePos && userPos) {
-      // Drone is in transit → fit both markers on screen
-      // As drone gets closer, bounds shrink → map auto-zooms in tighter
-      const bounds = L.latLngBounds([dronePos, userPos])
-      map.flyToBounds(bounds, {
-        padding: [80, 80],   // generous padding so markers aren't at the edge
-        maxZoom: 18,         // zoom tighter as drone gets closer
-        duration: 1.2,
-      })
-    } else if (userPos) {
-      // No active delivery → center on user location
-      map.flyTo(userPos, 18, { duration: 1 })
-    }
-  }, [map, dronePos, userPos, active])
-
-  // When delivery is cancelled (active goes true→false), snap to user
-  useEffect(() => {
-    if (prevActiveRef.current && !active && userPos) {
-      followRef.current = true
-      map.flyTo(userPos, 16, { duration: 1 })
-    }
-    prevActiveRef.current = active
-  }, [active, userPos, map])
-
-  // Pause auto-follow when user manually drags/zooms
   useEffect(() => {
     const pauseFollow = () => {
       followRef.current = false
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
         followRef.current = true
-        reframe()
-      }, 2000)
+      }, 4000)
     }
-
 
     map.on("dragstart zoomstart", pauseFollow)
     return () => map.off("dragstart zoomstart", pauseFollow)
-  }, [map, reframe])
+  }, [map])
 
-  // Re-fit whenever positions update (drone moving closer = tighter zoom)
   useEffect(() => {
-    if (followRef.current) {
-      reframe()
+    if (!followRef.current) return
+
+    if (active && dronePos && userPos) {
+      const key = `${dronePos[0].toFixed(4)}:${dronePos[1].toFixed(4)}:${userPos[0].toFixed(4)}:${userPos[1].toFixed(4)}`
+      if (lastBoundsKeyRef.current !== key) {
+        lastBoundsKeyRef.current = key
+        map.fitBounds(L.latLngBounds([dronePos, userPos]), {
+          padding: [80, 80],
+          maxZoom: 17,
+          animate: false,
+        })
+      }
+      return
     }
-  }, [dronePos, userPos, reframe])
+
+    if (userPos && positionsDiffer(lastCenteredUserRef.current, userPos)) {
+      lastCenteredUserRef.current = userPos
+      map.setView(userPos, 16, { animate: false })
+    }
+  }, [active, dronePos, userPos, map])
 
   return null
 }
 
-/* ================= ANIMATED PATH (ref-based) ================= */
-const AnimatedPath = ({ from, to }) => {
-  // Callback ref: as soon as Leaflet mounts the Polyline, grab its
-  // underlying SVG <path> element and add our CSS animation class.
-  const dashRef = useCallback((node) => {
-    if (node) {
-      const el = node.getElement()
-      if (el) {
-        el.classList.add("animated-path")
-      }
-    }
-  }, [])
+const AnimatedPath = ({ from, to }) => (
+  <>
+    <Polyline
+      positions={[from, to]}
+      pathOptions={{
+        color: "#000",
+        weight: 6,
+        opacity: 0.1,
+      }}
+    />
+    <Polyline
+      positions={[from, to]}
+      pathOptions={{
+        color: "#111",
+        weight: 2.5,
+        dashArray: "10 14",
+        lineCap: "round",
+      }}
+    />
+  </>
+)
 
-  return (
-    <>
-      {/* Glow backdrop */}
-      <Polyline
-        positions={[from, to]}
-        pathOptions={{
-          color: "#000",
-          weight: 6,
-          opacity: 0.1,
-        }}
-      />
-      {/* Animated dashes */}
-      <Polyline
-        ref={dashRef}
-        positions={[from, to]}
-        pathOptions={{
-          color: "#111",
-          weight: 2.5,
-          dashArray: "10 14",
-          lineCap: "round",
-        }}
-      />
-    </>
-  )
-}
-
-/* ================= MAIN MAP ================= */
 const Map = ({ droneLocation, userLocation, showPath }) => {
-  const dronePos = droneLocation
-    ? [droneLocation.lat, droneLocation.lng]
-    : null
-
-  const userPos = userLocation
-    ? [userLocation.lat, userLocation.lng]
-    : null
+  const dronePos = droneLocation ? [droneLocation.lat, droneLocation.lng] : null
+  const userPos = userLocation ? [userLocation.lat, userLocation.lng] : null
+  const initialCenter = userPos || dronePos || [28.49505278, 77.05681893]
 
   return (
     <MapContainer
-      center={[30.7695, 76.577523]}
+      center={initialCenter}
       zoom={16}
       className="h-full w-full"
-      scrollWheelZoom={true}
-      dragging={true}
+      scrollWheelZoom
+      dragging
       zoomControl={false}
     >
       <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
 
-      {/* 🖤 User location — black dot with pulse */}
       {userPos && <Marker position={userPos} icon={userDot} />}
-
-      {/* 🚁 Drone */}
       {dronePos && <Marker position={dronePos} icon={dronePin} />}
 
-      {/* Auto-fit: both markers when active, user only on cancel */}
       <RecenterMap dronePos={dronePos} userPos={userPos} active={showPath} />
 
-      {/* ✈ Animated path drone → user */}
-      {showPath && dronePos && userPos && (
-        <AnimatedPath from={dronePos} to={userPos} />
-      )}
+      {showPath && dronePos && userPos && <AnimatedPath from={dronePos} to={userPos} />}
     </MapContainer>
   )
 }
