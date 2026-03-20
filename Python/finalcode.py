@@ -382,7 +382,11 @@ def poll_mission_api():
                 f"target=({delivery_lat}, {delivery_lng}) mission={mission_state}"
             )
 
-            ready = mission_state in ("idle", "complete", "aborted")
+            if not booked and not confirmed and mission_state == "complete":
+                mission_state = "idle"
+                current_target = {"lat": None, "lng": None, "alt": None}
+
+            ready = mission_state in ("idle", "aborted")
             if booked and confirmed and ready:
                 if delivery_lat is None or delivery_lng is None:
                     print("[API] Waiting for delivery coordinates before launch")
