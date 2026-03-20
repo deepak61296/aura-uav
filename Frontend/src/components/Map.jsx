@@ -41,6 +41,18 @@ const RecenterMap = ({ dronePos, userPos, active }) => {
   const lastBoundsKeyRef = useRef(null)
 
   useEffect(() => {
+    const invalidate = () => map.invalidateSize({ pan: false })
+
+    const frame = window.requestAnimationFrame(invalidate)
+    window.addEventListener("resize", invalidate)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener("resize", invalidate)
+    }
+  }, [map])
+
+  useEffect(() => {
     const pauseFollow = () => {
       followRef.current = false
       if (timerRef.current) clearTimeout(timerRef.current)
