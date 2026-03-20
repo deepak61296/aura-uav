@@ -83,16 +83,16 @@ const AnimatedPath = ({ from, to }) => (
     <Polyline
       positions={[from, to]}
       pathOptions={{
-        color: "#000",
-        weight: 6,
-        opacity: 0.1,
+        color: "#f8fafc",
+        weight: 7,
+        opacity: 0.35,
       }}
     />
     <Polyline
       positions={[from, to]}
       pathOptions={{
-        color: "#111",
-        weight: 2.5,
+        color: "#ffffff",
+        weight: 3,
         dashArray: "10 14",
         lineCap: "round",
       }}
@@ -114,7 +114,14 @@ const Map = ({ droneLocation, userLocation, showPath }) => {
       dragging
       zoomControl={false}
     >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+      <TileLayer
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        attribution='Tiles &copy; Esri'
+      />
+      <TileLayer
+        url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+        attribution='Labels &copy; Esri'
+      />
 
       {userPos && <Marker position={userPos} icon={userDot} />}
       {dronePos && <Marker position={dronePos} icon={dronePin} />}

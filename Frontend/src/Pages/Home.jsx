@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react"
 import Map from "../components/Map"
 import FloatingInfoCard from "../components/FloatingInfoCard"
-import { API_KEY, API_URL, DRONE_ID } from "../config/api"
+import { API_KEY, API_URL, CONTROLLER_URL, DRONE_ID } from "../config/api"
 
 const pushLocation = async (location) => {
   try {
@@ -39,6 +39,52 @@ const getBrowserLocation = () => new Promise((resolve, reject) => {
   )
 })
 
+const distanceMeters = (a, b) => {
+  if (!a || !b) return null
+  const earthRadius = 6371000
+  const lat1 = a.lat * Math.PI / 180
+  const lat2 = b.lat * Math.PI / 180
+  const dLat = lat2 - lat1
+  const dLng = (b.lng - a.lng) * Math.PI / 180
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+  return earthRadius * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
+}
+
+const computeProgress = (telemetry) => {
+  const mission = telemetry?.mission
+  const gps = telemetry?.gps?.latitude != null && telemetry?.gps?.longitude != null
+    ? { lat: telemetry.gps.latitude, lng: telemetry.gps.longitude }
+    : null
+  const home = telemetry?.home?.latitude != null && telemetry?.home?.longitude != null
+    ? { lat: telemetry.home.latitude, lng: telemetry.home.longitude }
+    : null
+  const delivery = telemetry?.delivery?.lat != null && telemetry?.delivery?.lng != null
+    ? { lat: telemetry.delivery.lat, lng: telemetry.delivery.lng }
+    : null
+
+  if (mission === "taking_off") return 8
+  if (mission === "flying_to_delivery" && gps && home && delivery) {
+    const total = distanceMeters(home, delivery)
+    const remaining = distanceMeters(gps, delivery)
+    if (total && remaining != null) {
+      return Math.max(12, Math.min(74, Math.round(12 + (1 - remaining / total) * 62)))
+    }
+    return 35
+  }
+  if (mission === "descending") return 78
+  if (mission === "climbing") return 84
+  if (mission === "returning_home" && gps && home && delivery) {
+    const total = distanceMeters(delivery, home)
+    const remaining = distanceMeters(gps, home)
+    if (total && remaining != null) {
+      return Math.max(88, Math.min(99, Math.round(88 + (1 - remaining / total) * 11)))
+    }
+    return 92
+  }
+  if (mission === "complete") return 100
+  return 0
+}
+
 const Home = () => {
   const [userLocation, setUserLocation] = useState(null)
   const [droneLocation, setDroneLocation] = useState(null)
@@ -47,6 +93,7 @@ const Home = () => {
   const [progress, setProgress] = useState(0)
   const [loading, setLoading] = useState(false)
   const [showPath, setShowPath] = useState(false)
+  const [missionState, setMissionState] = useState("idle")
   const syncLockRef = useRef(null)
   const lastLocationKeyRef = useRef(null)
 
@@ -85,29 +132,32 @@ const Home = () => {
       if (data) {
         setBooked(Boolean(data.booked))
         setConfirmed(Boolean(data.confirmed))
-        setShowPath(Boolean(data.booked))
+        setShowPath(Boolean(data.booked || data.confirmed))
       }
     } catch (err) {
       console.error("Status fetch error:", err)
     }
   }
 
-  const fetchTelemetry = async () => {
+  const fetchControllerTelemetry = async () => {
     try {
-      const res = await fetch(`${API_URL}/telemetry/latest/${DRONE_ID}`, {
-        headers: { "x-api-key": API_KEY }
-      })
+      const res = await fetch(`${CONTROLLER_URL}/telemetry`)
+      if (!res.ok) return
       const data = await res.json()
-      if (data?.lat && data?.lon) {
-        setDroneLocation({ lat: data.lat, lng: data.lon })
+
+      if (data?.gps?.latitude != null && data?.gps?.longitude != null) {
+        setDroneLocation({ lat: data.gps.latitude, lng: data.gps.longitude })
       }
+
+      setMissionState(data?.mission || "idle")
+      setProgress(computeProgress(data))
     } catch (err) {
-      console.error("Telemetry fetch error:", err)
+      console.error("Controller telemetry error:", err)
     }
   }
 
   const fetchDashboard = async () => {
-    await Promise.all([fetchStatus(), fetchTelemetry()])
+    await Promise.all([fetchStatus(), fetchControllerTelemetry()])
   }
 
   const handleAction = async (type) => {
@@ -156,7 +206,10 @@ const Home = () => {
         throw new Error(data.error || `${type} request failed`)
       }
 
-      if (type === "book") setBooked(true)
+      if (type === "book") {
+        setBooked(true)
+        setProgress(0)
+      }
       if (type === "confirm") {
         setBooked(true)
         setConfirmed(true)
@@ -166,6 +219,8 @@ const Home = () => {
         setBooked(false)
         setConfirmed(false)
         setShowPath(false)
+        setProgress(0)
+        setMissionState("idle")
       }
 
       await fetchDashboard()
@@ -202,6 +257,7 @@ const Home = () => {
           booked={booked}
           confirmed={confirmed}
           progress={progress}
+          missionState={missionState}
           onAction={handleAction}
         />
       </div>

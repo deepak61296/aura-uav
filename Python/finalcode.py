@@ -332,8 +332,6 @@ def run_delivery_mission(delivery_lat, delivery_lng, delivery_alt=None):
         if not rc_safe_sleep(2, "payload drop"):
             return
 
-        reset_api()
-
         mission_state = "climbing"
         if not change_altitude_and_wait(TAKEOFF_ALTITUDE, "post-drop climb"):
             if mission_state != "aborted":
@@ -353,6 +351,8 @@ def run_delivery_mission(delivery_lat, delivery_lng, delivery_alt=None):
         current_target = {"lat": delivery_lat, "lng": delivery_lng, "alt": delivery_alt}
         mission_state = "complete"
         print("[MISSION] Mission complete")
+        time.sleep(2)
+        reset_api()
 
 
 def poll_mission_api():

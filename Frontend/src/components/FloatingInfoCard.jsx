@@ -5,7 +5,7 @@ import { IoClose } from "react-icons/io5"
 import { motion, AnimatePresence } from "framer-motion"
 import DroneIcon from "../assets/icons/Drone_Icon.png"
 
-const FloatingInfoCard = ({ loading, booked, confirmed, progress, onAction }) => {
+const FloatingInfoCard = ({ loading, booked, confirmed, progress, missionState, onAction }) => {
   const [open, setOpen] = useState(true)
 
   return (
@@ -81,7 +81,7 @@ const FloatingInfoCard = ({ loading, booked, confirmed, progress, onAction }) =>
           ) : !confirmed ? (
             <ConfirmState key="confirm" onConfirm={() => onAction("confirm")} onCancel={() => onAction("reset")} />
           ) : (
-            <TrackingState key="tracking" progress={progress} onCancel={() => onAction("reset")} />
+            <TrackingState key="tracking" progress={progress} missionState={missionState} onCancel={() => onAction("reset")} />
           )}
         </AnimatePresence>
       </div>
@@ -222,7 +222,17 @@ const ConfirmState = ({ onConfirm, onCancel }) => (
 )
 
 /* ===== TRACKING STATE — Progress bar with drone icon ===== */
-const TrackingState = ({ progress, onCancel }) => (
+const missionLabels = {
+  idle: "Waiting",
+  taking_off: "Taking off",
+  flying_to_delivery: "Flying to destination",
+  descending: "Dropping package",
+  climbing: "Climbing out",
+  returning_home: "Returning to base",
+  complete: "Delivered",
+}
+
+const TrackingState = ({ progress, missionState, onCancel }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
@@ -238,7 +248,7 @@ const TrackingState = ({ progress, onCancel }) => (
         </div>
         <div>
           <h3 className="text-[15px] font-semibold text-slate-900 tracking-tight leading-tight">In Transit</h3>
-          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mt-0.5">Live Tracking</p>
+          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mt-0.5">{missionLabels[missionState] || "Live Tracking"}</p>
         </div>
       </div>
       <span className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight">{progress}%</span>
