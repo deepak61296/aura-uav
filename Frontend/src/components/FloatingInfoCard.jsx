@@ -226,10 +226,13 @@ const missionLabels = {
   idle: "Waiting",
   taking_off: "Taking off",
   flying_to_delivery: "Flying to destination",
-  descending: "Dropping package",
+  descending: "Descending to drop point",
+  holding_over_delivery: "Holding over delivery point",
+  dropping_parcel: "Dropping parcel",
   climbing: "Climbing out",
   returning_home: "Returning to base",
   complete: "Delivered",
+  reset_failed: "Delivered, waiting for reset",
 }
 
 const TrackingState = ({ progress, missionState, onCancel }) => (

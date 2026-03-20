@@ -72,6 +72,8 @@ const computeProgress = (telemetry) => {
     return 35
   }
   if (mission === "descending") return 78
+  if (mission === "holding_over_delivery") return 82
+  if (mission === "dropping_parcel") return 86
   if (mission === "climbing") return 84
   if (mission === "returning_home" && gps && home && delivery) {
     const total = distanceMeters(delivery, home)
@@ -82,6 +84,7 @@ const computeProgress = (telemetry) => {
     return 92
   }
   if (mission === "complete") return 100
+  if (mission === "reset_failed") return 100
   return 0
 }
 

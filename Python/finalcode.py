@@ -24,6 +24,9 @@ TELEMETRY_PUSH_INTERVAL = float(os.getenv("TELEMETRY_PUSH_INTERVAL", "1"))
 TAKEOFF_ALTITUDE = float(os.getenv("TAKEOFF_ALTITUDE", "5"))
 DESCENT_ALTITUDE = float(os.getenv("DESCENT_ALTITUDE", "2"))
 WAYPOINT_RADIUS = float(os.getenv("WAYPOINT_RADIUS", "2"))
+DROP_HOVER_SECONDS = float(os.getenv("DROP_HOVER_SECONDS", "4"))
+DROP_RELEASE_SECONDS = float(os.getenv("DROP_RELEASE_SECONDS", "3"))
+RESET_RETRY_COUNT = int(os.getenv("RESET_RETRY_COUNT", "8"))
 
 MISSION_API_URL = f"{API_BASE_URL}/drone/{DRONE_ID}"
 RESET_API_URL = f"{API_BASE_URL}/drone/reset"
@@ -207,7 +210,7 @@ def wait_for_disarm(timeout=240):
 
 
 def reset_api():
-    for attempt in range(1, 4):
+    for attempt in range(1, RESET_RETRY_COUNT + 1):
         try:
             response = requests.post(
                 RESET_API_URL,
@@ -326,10 +329,15 @@ def run_delivery_mission(delivery_lat, delivery_lng, delivery_alt=None):
             mission_state = "idle"
             return
 
+        mission_state = "holding_over_delivery"
+        if not rc_safe_sleep(DROP_HOVER_SECONDS, "delivery hover"):
+            return
+
+        mission_state = "dropping_parcel"
         servo_state = "active"
         set_servo(5, 1000)
         servo_state = "off"
-        if not rc_safe_sleep(2, "payload drop"):
+        if not rc_safe_sleep(DROP_RELEASE_SECONDS, "payload drop"):
             return
 
         mission_state = "climbing"
@@ -352,7 +360,9 @@ def run_delivery_mission(delivery_lat, delivery_lng, delivery_alt=None):
         mission_state = "complete"
         print("[MISSION] Mission complete")
         time.sleep(2)
-        reset_api()
+        if not reset_api():
+            mission_state = "reset_failed"
+            print("[API] Reset failed after all retries")
 
 
 def poll_mission_api():
