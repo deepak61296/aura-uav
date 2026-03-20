@@ -116,15 +116,3 @@ body {
   pointer-events: none;
   border-radius: 1rem;
 }
-
-/* Subtle gradient overlay on map for depth */
-.map-gradient-overlay {
-  background: linear-gradient(
-    to bottom,
-    rgba(248, 250, 252, 0.6) 0%,
-    transparent 15%,
-    transparent 75%,
-    rgba(248, 250, 252, 0.4) 100%
-  );
-  pointer-events: none;
-}

@@ -112,7 +112,31 @@ const AnimatedPath = ({ from, to }) => (
   </>
 )
 
-const Map = ({ droneLocation, userLocation, showPath }) => {
+const BaseLayer = ({ mapStyle }) => {
+  if (mapStyle === "standard") {
+    return (
+      <TileLayer
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; OpenStreetMap contributors'
+      />
+    )
+  }
+
+  return (
+    <>
+      <TileLayer
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        attribution='Tiles &copy; Esri'
+      />
+      <TileLayer
+        url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+        attribution='Labels &copy; Esri'
+      />
+    </>
+  )
+}
+
+const Map = ({ droneLocation, userLocation, showPath, mapStyle }) => {
   const dronePos = droneLocation ? [droneLocation.lat, droneLocation.lng] : null
   const userPos = userLocation ? [userLocation.lat, userLocation.lng] : null
   const initialCenter = userPos || dronePos || [28.49505278, 77.05681893]
@@ -126,14 +150,7 @@ const Map = ({ droneLocation, userLocation, showPath }) => {
       dragging
       zoomControl={false}
     >
-      <TileLayer
-        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        attribution='Tiles &copy; Esri'
-      />
-      <TileLayer
-        url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-        attribution='Labels &copy; Esri'
-      />
+      <BaseLayer mapStyle={mapStyle} />
 
       {userPos && <Marker position={userPos} icon={userDot} />}
       {dronePos && <Marker position={dronePos} icon={dronePin} />}

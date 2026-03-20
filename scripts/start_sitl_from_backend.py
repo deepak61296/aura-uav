@@ -8,7 +8,7 @@ import urllib.request
 
 API_URL = os.getenv("AURA_API_URL", "http://localhost:5000")
 DRONE_ID = os.getenv("AURA_DRONE_ID", "DRONE001")
-OFFSET_METERS = float(os.getenv("AURA_SITL_OFFSET_METERS", "100"))
+OFFSET_METERS = float(os.getenv("AURA_SITL_OFFSET_METERS", "150"))
 DEFAULT_ALT = float(os.getenv("AURA_SITL_ALT", "243.95"))
 
 status_url = f"{API_URL}/drone/{DRONE_ID}"

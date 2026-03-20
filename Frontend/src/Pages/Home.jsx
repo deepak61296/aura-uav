@@ -94,6 +94,7 @@ const Home = () => {
   const [loading, setLoading] = useState(false)
   const [showPath, setShowPath] = useState(false)
   const [missionState, setMissionState] = useState("idle")
+  const [mapStyle, setMapStyle] = useState("satellite")
   const syncLockRef = useRef(null)
   const lastLocationKeyRef = useRef(null)
 
@@ -246,10 +247,32 @@ const Home = () => {
           droneLocation={droneLocation}
           userLocation={userLocation}
           showPath={showPath}
+          mapStyle={mapStyle}
         />
       </div>
 
-      <div className="absolute inset-0 z-[1] map-gradient-overlay" />
+      <div className="absolute top-5 right-5 z-[10001]">
+        <div className="inline-flex rounded-full border border-white/70 bg-white/90 p-1 shadow-card backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setMapStyle("standard")}
+            className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+              mapStyle === "standard" ? "bg-slate-900 text-white" : "text-slate-600"
+            }`}
+          >
+            Map
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapStyle("satellite")}
+            className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+              mapStyle === "satellite" ? "bg-slate-900 text-white" : "text-slate-600"
+            }`}
+          >
+            Satellite
+          </button>
+        </div>
+      </div>
 
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-[10000] w-full max-w-lg px-2 sm:px-4">
         <FloatingInfoCard
