@@ -2,6 +2,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch server.js",
+    "dev:sim": "AURA_AUTO_START_SIM=1 node --watch server.js",
     "start": "node server.js"
   },
   "dependencies": {
