@@ -136,7 +136,7 @@ export const startSimStack = async ({ lat, lng, alt, heading, offsetMeters, dron
         API_BASE_URL,
         VEHICLE_CONNECTION: "udp:127.0.0.1:14550",
         API_KEY,
-        FLASK_RUN_PORT: String(CONTROLLER_PORT),
+        CONTROLLER_PORT: String(CONTROLLER_PORT),
       },
       stdio: ["ignore", controllerLogHandle, controllerLogHandle],
     }
