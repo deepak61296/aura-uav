@@ -18,6 +18,8 @@ const DRONE_ID = process.env.AURA_DRONE_ID || "DRONE001";
 const LOG_DIR = "/tmp/aura-sim";
 const SITL_LOG = path.join(LOG_DIR, "sitl.log");
 const CONTROLLER_LOG = path.join(LOG_DIR, "controller.log");
+const SITL_PID_FILE = path.join(LOG_DIR, "sitl.pid");
+const CONTROLLER_PID_FILE = path.join(LOG_DIR, "controller.pid");
 
 let sitlProcess = null;
 let controllerProcess = null;
@@ -28,19 +30,64 @@ const ensureLogDir = () => {
   fs.mkdirSync("/tmp/aura-sitl", { recursive: true });
 };
 
+const resetLogFile = (filePath) => {
+  fs.writeFileSync(filePath, "");
+};
+
+const readPidFile = (filePath) => {
+  try {
+    const pid = Number(fs.readFileSync(filePath, "utf8").trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
+const writePidFile = (filePath, pid) => {
+  fs.writeFileSync(filePath, String(pid));
+};
+
+const removePidFile = (filePath) => {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {}
+};
+
+const isPidRunning = (pid) => {
+  if (!pid) return false;
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const toOffsetLongitude = (lat, lng, offsetMeters) =>
   lng - offsetMeters / (111320 * Math.cos((lat * Math.PI) / 180));
 
 const appendLogHandle = (filePath) => fs.openSync(filePath, "a");
 
-const processStatus = (child) => ({
-  running: Boolean(child && child.exitCode === null && !child.killed),
-  pid: child?.pid ?? null,
-});
+const processStatus = (child, pidFile) => {
+  const childRunning = Boolean(child && child.exitCode === null && !child.killed);
+  const pid = child?.pid ?? readPidFile(pidFile);
+
+  return {
+    running: childRunning || isPidRunning(pid),
+    pid: pid ?? null,
+  };
+};
 
 const cleanupProcessRef = (name) => {
-  if (name === "sitl") sitlProcess = null;
-  if (name === "controller") controllerProcess = null;
+  if (name === "sitl") {
+    sitlProcess = null;
+    removePidFile(SITL_PID_FILE);
+  }
+  if (name === "controller") {
+    controllerProcess = null;
+    removePidFile(CONTROLLER_PID_FILE);
+  }
 };
 
 const attachExitCleanup = (name, child) => {
@@ -48,41 +95,92 @@ const attachExitCleanup = (name, child) => {
   child.on("error", () => cleanupProcessRef(name));
 };
 
-const stopChild = async (child, signal = "SIGTERM") => {
-  if (!child || child.exitCode !== null || child.killed) return;
+const stopByPid = async (pid) => {
+  if (!isPidRunning(pid)) return;
 
-  child.kill(signal);
+  process.kill(pid, "SIGTERM");
 
-  await new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      if (child.exitCode === null && !child.killed) {
-        child.kill("SIGKILL");
-      }
-    }, 3000);
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (!isPidRunning(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
 
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+  if (isPidRunning(pid)) {
+    process.kill(pid, "SIGKILL");
+  }
+};
+
+const stopChild = async (child, pidFile) => {
+  const pid = child?.pid ?? readPidFile(pidFile);
+  await stopByPid(pid);
 };
 
 export const stopSimStack = async () => {
-  await stopChild(controllerProcess);
-  await stopChild(sitlProcess);
+  await stopChild(controllerProcess, CONTROLLER_PID_FILE);
+  await stopChild(sitlProcess, SITL_PID_FILE);
   controllerProcess = null;
   sitlProcess = null;
+  removePidFile(CONTROLLER_PID_FILE);
+  removePidFile(SITL_PID_FILE);
 };
 
-export const getSimStatus = () => ({
-  sitl: processStatus(sitlProcess),
-  controller: processStatus(controllerProcess),
+const controllerBaseStatus = () => ({
+  sitl: processStatus(sitlProcess, SITL_PID_FILE),
+  controller: processStatus(controllerProcess, CONTROLLER_PID_FILE),
   home: lastHome,
   logs: {
     sitl: SITL_LOG,
     controller: CONTROLLER_LOG,
   },
 });
+
+const fetchControllerTelemetry = async () => {
+  if (!controllerProcess || controllerProcess.exitCode !== null || controllerProcess.killed) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${CONTROLLER_PORT}/telemetry`);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+};
+
+const hasGpsFix = (telemetry) =>
+  Boolean(
+    telemetry
+      && telemetry.gpsFixType >= 3
+      && telemetry.gps?.latitude
+      && telemetry.gps?.longitude
+  );
+
+export const getSimStatus = async () => {
+  const telemetry = await fetchControllerTelemetry();
+
+  return {
+    ...controllerBaseStatus(),
+    controllerReady: Boolean(telemetry),
+    gpsReady: hasGpsFix(telemetry),
+    telemetry,
+  };
+};
+
+const waitForControllerReady = async (timeoutMs = 20000) => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const telemetry = await fetchControllerTelemetry();
+    if (telemetry) {
+      return telemetry;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  return null;
+};
 
 export const startSimStack = async ({ lat, lng, alt, heading, offsetMeters, droneId } = {}) => {
   ensureLogDir();
@@ -101,6 +199,9 @@ export const startSimStack = async ({ lat, lng, alt, heading, offsetMeters, dron
     targetLat: Number(lat),
     targetLng: Number(lng),
   };
+
+  resetLogFile(SITL_LOG);
+  resetLogFile(CONTROLLER_LOG);
 
   const sitlLogHandle = appendLogHandle(SITL_LOG);
   sitlProcess = spawn(
@@ -121,6 +222,7 @@ export const startSimStack = async ({ lat, lng, alt, heading, offsetMeters, dron
     }
   );
   attachExitCleanup("sitl", sitlProcess);
+  writePidFile(SITL_PID_FILE, sitlProcess.pid);
 
   await new Promise((resolve) => setTimeout(resolve, 4000));
 
@@ -142,6 +244,14 @@ export const startSimStack = async ({ lat, lng, alt, heading, offsetMeters, dron
     }
   );
   attachExitCleanup("controller", controllerProcess);
+  writePidFile(CONTROLLER_PID_FILE, controllerProcess.pid);
 
-  return getSimStatus();
+  const telemetry = await waitForControllerReady();
+
+  return {
+    ...controllerBaseStatus(),
+    controllerReady: Boolean(telemetry),
+    gpsReady: hasGpsFix(telemetry),
+    telemetry,
+  };
 };

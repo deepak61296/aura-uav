@@ -33,8 +33,8 @@ const resolveTarget = async (body) => {
   return { lat, lng, alt };
 };
 
-router.get("/status", (req, res) => {
-  res.json(getSimStatus());
+router.get("/status", async (req, res) => {
+  res.json(await getSimStatus());
 });
 
 router.post("/start", async (req, res) => {
@@ -55,7 +55,7 @@ router.post("/start", async (req, res) => {
 router.post("/stop", async (req, res) => {
   try {
     await stopSimStack();
-    res.json({ message: "SITL stack stopped", ...getSimStatus() });
+    res.json({ message: "SITL stack stopped", ...(await getSimStatus()) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

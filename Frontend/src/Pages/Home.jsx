@@ -50,6 +50,13 @@ const distanceMeters = (a, b) => {
   return earthRadius * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
 }
 
+const hasValidDroneFix = (telemetry) =>
+  Boolean(
+    telemetry?.gpsFixType >= 3
+      && telemetry?.gps?.latitude
+      && telemetry?.gps?.longitude
+  )
+
 const computeProgress = (telemetry) => {
   const mission = telemetry?.mission
   const gps = telemetry?.gps?.latitude != null && telemetry?.gps?.longitude != null
@@ -74,14 +81,14 @@ const computeProgress = (telemetry) => {
   if (mission === "descending") return 78
   if (mission === "holding_over_delivery") return 82
   if (mission === "dropping_parcel") return 86
-  if (mission === "climbing") return 84
+  if (mission === "climbing") return 88
   if (mission === "returning_home" && gps && home && delivery) {
     const total = distanceMeters(delivery, home)
     const remaining = distanceMeters(gps, home)
     if (total && remaining != null) {
-      return Math.max(88, Math.min(99, Math.round(88 + (1 - remaining / total) * 11)))
+      return Math.max(90, Math.min(99, Math.round(90 + (1 - remaining / total) * 9)))
     }
-    return 92
+    return 94
   }
   if (mission === "complete") return 100
   if (mission === "reset_failed") return 100
@@ -98,6 +105,7 @@ const Home = () => {
   const [showPath, setShowPath] = useState(false)
   const [missionState, setMissionState] = useState("idle")
   const [mapStyle, setMapStyle] = useState("satellite")
+  const [simStatus, setSimStatus] = useState(null)
   const syncLockRef = useRef(null)
   const lastLocationKeyRef = useRef(null)
 
@@ -149,7 +157,7 @@ const Home = () => {
       if (!res.ok) return
       const data = await res.json()
 
-      if (data?.gps?.latitude != null && data?.gps?.longitude != null) {
+      if (hasValidDroneFix(data)) {
         setDroneLocation({ lat: data.gps.latitude, lng: data.gps.longitude })
       }
 
@@ -160,8 +168,21 @@ const Home = () => {
     }
   }
 
+  const fetchSimStatus = async () => {
+    try {
+      const res = await fetch(`${API_URL}/sim/status`, {
+        headers: { "x-api-key": API_KEY }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setSimStatus(data)
+    } catch (err) {
+      console.error("Sim status error:", err)
+    }
+  }
+
   const fetchDashboard = async () => {
-    await Promise.all([fetchStatus(), fetchControllerTelemetry()])
+    await Promise.all([fetchStatus(), fetchControllerTelemetry(), fetchSimStatus()])
   }
 
   const handleAction = async (type) => {
@@ -277,6 +298,24 @@ const Home = () => {
         </div>
       </div>
 
+      <div className="absolute top-5 left-5 z-[10001] flex flex-wrap gap-2">
+        <StatusPill
+          label="SITL"
+          value={simStatus?.sitl?.running ? "Running" : "Stopped"}
+          tone={simStatus?.sitl?.running ? "good" : "bad"}
+        />
+        <StatusPill
+          label="Controller"
+          value={simStatus?.controllerReady ? "Ready" : "Starting"}
+          tone={simStatus?.controllerReady ? "good" : "warn"}
+        />
+        <StatusPill
+          label="GPS"
+          value={simStatus?.gpsReady ? "Locked" : "Warming"}
+          tone={simStatus?.gpsReady ? "good" : "warn"}
+        />
+      </div>
+
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-[10000] w-full max-w-lg px-2 sm:px-4">
         <FloatingInfoCard
           loading={loading}
@@ -290,5 +329,18 @@ const Home = () => {
     </div>
   )
 }
+
+const toneClasses = {
+  good: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  warn: "bg-amber-50 text-amber-700 border-amber-200",
+  bad: "bg-rose-50 text-rose-700 border-rose-200",
+}
+
+const StatusPill = ({ label, value, tone }) => (
+  <div className={`rounded-full border px-3 py-2 shadow-card backdrop-blur ${toneClasses[tone]}`}>
+    <div className="text-[9px] font-bold uppercase tracking-[0.22em] opacity-70">{label}</div>
+    <div className="text-xs font-semibold">{value}</div>
+  </div>
+)
 
 export default Home
