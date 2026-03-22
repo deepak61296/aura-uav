@@ -308,7 +308,7 @@ const TrackingState = ({ progress, missionState, onCancel }) => (
       className="flex items-center justify-center gap-2 self-center px-5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 active:scale-[0.97] transition-all group"
     >
       <IoClose size={14} className="text-red-400 group-hover:text-red-500 transition-colors" />
-      <span className="text-[11px] font-semibold text-red-400 group-hover:text-red-500 uppercase tracking-wider transition-colors">Cancel Delivery</span>
+      <span className="text-[11px] font-semibold text-red-400 group-hover:text-red-500 uppercase tracking-wider transition-colors">Reset Order</span>
     </button>
   </motion.div>
 )

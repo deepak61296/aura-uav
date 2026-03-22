@@ -33,6 +33,20 @@ const resolveTarget = async (body) => {
   return { lat, lng, alt };
 };
 
+const clearMissionState = async (droneId) => {
+  await DroneStatus.findOneAndUpdate(
+    { droneId },
+    {
+      booked: false,
+      confirmed: false,
+      deliveryLat: null,
+      deliveryLng: null,
+      deliveryAlt: null,
+    },
+    { upsert: true, returnDocument: "after" }
+  );
+};
+
 router.get("/status", async (req, res) => {
   res.json(await getSimStatus());
 });
@@ -56,6 +70,27 @@ router.post("/stop", async (req, res) => {
   try {
     await stopSimStack();
     res.json({ message: "SITL stack stopped", ...(await getSimStatus()) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/reset", async (req, res) => {
+  try {
+    const droneId = req.body?.droneId || "DRONE001";
+    const target = await resolveTarget({ ...(req.body || {}), droneId });
+
+    await stopSimStack();
+    await clearMissionState(droneId);
+
+    const status = await startSimStack({
+      ...target,
+      heading: req.body?.heading,
+      offsetMeters: req.body?.offsetMeters,
+      droneId,
+    });
+
+    res.json({ message: "SITL stack reset", ...status });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

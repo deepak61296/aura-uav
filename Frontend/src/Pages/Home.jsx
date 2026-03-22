@@ -95,6 +95,11 @@ const computeProgress = (telemetry) => {
   return 0
 }
 
+const missionBadgeLabel = (mission) => {
+  if (!mission || mission === "idle") return "Idle"
+  return mission.replaceAll("_", " ")
+}
+
 const Home = () => {
   const [userLocation, setUserLocation] = useState(null)
   const [droneLocation, setDroneLocation] = useState(null)
@@ -104,7 +109,7 @@ const Home = () => {
   const [loading, setLoading] = useState(false)
   const [showPath, setShowPath] = useState(false)
   const [missionState, setMissionState] = useState("idle")
-  const [mapStyle, setMapStyle] = useState("satellite")
+  const [mapStyle, setMapStyle] = useState("standard")
   const [simStatus, setSimStatus] = useState(null)
   const syncLockRef = useRef(null)
   const lastLocationKeyRef = useRef(null)
@@ -258,6 +263,46 @@ const Home = () => {
     }
   }
 
+  const handleSimulationReset = async () => {
+    setLoading(true)
+
+    try {
+      const latestLocation = userLocation || await getBrowserLocation()
+      setUserLocation(latestLocation)
+      await pushLocation(latestLocation)
+
+      const res = await fetch(`${API_URL}/sim/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
+        body: JSON.stringify({
+          droneId: DRONE_ID,
+          lat: latestLocation.lat,
+          lng: latestLocation.lng,
+          alt: latestLocation.altitude,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Simulation reset failed")
+      }
+
+      setBooked(false)
+      setConfirmed(false)
+      setShowPath(false)
+      setProgress(0)
+      setMissionState("idle")
+      setDroneLocation(null)
+
+      await fetchDashboard()
+    } catch (err) {
+      console.error("Simulation reset failed:", err)
+      window.alert(err.message || "Simulation reset failed")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetchDashboard()
     const interval = setInterval(fetchDashboard, 2000)
@@ -314,6 +359,18 @@ const Home = () => {
           value={simStatus?.gpsReady ? "Locked" : "Warming"}
           tone={simStatus?.gpsReady ? "good" : "warn"}
         />
+        <StatusPill
+          label="Mission"
+          value={missionBadgeLabel(simStatus?.telemetry?.mission)}
+          tone={simStatus?.telemetry?.mission && simStatus.telemetry.mission !== "idle" ? "warn" : "good"}
+        />
+        <button
+          type="button"
+          onClick={handleSimulationReset}
+          className="rounded-full border border-slate-200 bg-white/90 px-4 py-2 text-xs font-semibold text-slate-700 shadow-card backdrop-blur transition hover:bg-white"
+        >
+          Reset Sim
+        </button>
       </div>
 
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-[10000] w-full max-w-lg px-2 sm:px-4">
