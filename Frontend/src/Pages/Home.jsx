@@ -100,6 +100,9 @@ const missionBadgeLabel = (mission) => {
   return mission.replaceAll("_", " ")
 }
 
+const isSimulationReady = (status) =>
+  Boolean(status?.sitl?.running && status?.controllerReady && status?.gpsReady)
+
 const Home = () => {
   const [userLocation, setUserLocation] = useState(null)
   const [droneLocation, setDroneLocation] = useState(null)
@@ -192,6 +195,15 @@ const Home = () => {
 
   const handleAction = async (type) => {
     let payload = { droneId: DRONE_ID }
+
+    if (type === "confirm" && !isSimulationReady(simStatus)) {
+      if (simStatus?.warmupTimedOut) {
+        window.alert("Drone unavailable right now. Use Reset Sim and wait for GPS Locked before confirming.")
+      } else {
+        window.alert("We're preparing our drones in the background. Wait for SITL Running, Controller Ready, and GPS Locked before confirming.")
+      }
+      return
+    }
 
     if (type === "confirm") {
       try {
@@ -352,12 +364,12 @@ const Home = () => {
         <StatusPill
           label="Controller"
           value={simStatus?.controllerReady ? "Ready" : "Starting"}
-          tone={simStatus?.controllerReady ? "good" : "warn"}
+          tone={simStatus?.controllerReady ? "good" : (simStatus?.warmupTimedOut ? "bad" : "warn")}
         />
         <StatusPill
           label="GPS"
-          value={simStatus?.gpsReady ? "Locked" : "Warming"}
-          tone={simStatus?.gpsReady ? "good" : "warn"}
+          value={simStatus?.gpsReady ? "Locked" : (simStatus?.warmupTimedOut ? "Timeout" : "Warming")}
+          tone={simStatus?.gpsReady ? "good" : (simStatus?.warmupTimedOut ? "bad" : "warn")}
         />
         <StatusPill
           label="Mission"

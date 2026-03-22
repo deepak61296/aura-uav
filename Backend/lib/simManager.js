@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 
 const REPO_ROOT = path.resolve(process.cwd(), "..");
 const SITL_BIN = process.env.SITL_BIN || "/home/deepak/ardupilot/build/sitl/bin/arducopter";
@@ -14,6 +14,7 @@ const CONTROLLER_PORT = Number(process.env.CONTROLLER_PORT || 5001);
 const API_BASE_URL = process.env.AURA_API_BASE_URL || "http://localhost:5000";
 const API_KEY = process.env.API_KEY || "SUPER_SECRET_KEY";
 const DRONE_ID = process.env.AURA_DRONE_ID || "DRONE001";
+const CONTROLLER_PATTERN = path.join(REPO_ROOT, "Python", "finalcode.py");
 
 const LOG_DIR = "/tmp/aura-sim";
 const SITL_LOG = path.join(LOG_DIR, "sitl.log");
@@ -62,6 +63,29 @@ const isPidRunning = (pid) => {
   } catch {
     return false;
   }
+};
+
+const execFileAsync = (cmd, args) => new Promise((resolve) => {
+  execFile(cmd, args, (error, stdout) => {
+    if (error) {
+      resolve([]);
+      return;
+    }
+
+    const pids = stdout
+      .split("\n")
+      .map((line) => Number(line.trim()))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+
+    resolve(pids);
+  });
+});
+
+const findMatchingPids = async (pattern) => execFileAsync("pgrep", ["-f", pattern]);
+
+const newestPid = async (pattern) => {
+  const pids = await findMatchingPids(pattern);
+  return pids.length ? pids[pids.length - 1] : null;
 };
 
 const toOffsetLongitude = (lat, lng, offsetMeters) =>
@@ -118,9 +142,16 @@ const stopChild = async (child, pidFile) => {
   await stopByPid(pid);
 };
 
+const stopMatchingProcesses = async (pattern) => {
+  const pids = await findMatchingPids(pattern);
+  await Promise.all(pids.map((pid) => stopByPid(pid)));
+};
+
 export const stopSimStack = async () => {
   await stopChild(controllerProcess, CONTROLLER_PID_FILE);
   await stopChild(sitlProcess, SITL_PID_FILE);
+  await stopMatchingProcesses(CONTROLLER_PATTERN);
+  await stopMatchingProcesses(SITL_BIN);
   controllerProcess = null;
   sitlProcess = null;
   removePidFile(CONTROLLER_PID_FILE);
@@ -138,7 +169,7 @@ const controllerBaseStatus = () => ({
 });
 
 const fetchControllerTelemetry = async () => {
-  if (!controllerStatus().running) {
+  if (!controllerStatus().running && !(await newestPid(CONTROLLER_PATTERN))) {
     return null;
   }
 
@@ -159,13 +190,39 @@ const hasGpsFix = (telemetry) =>
       && telemetry.gps?.longitude
   );
 
+const getStartedAt = () => {
+  try {
+    return fs.statSync(SITL_LOG).mtime.toISOString();
+  } catch {
+    return null;
+  }
+};
+
 export const getSimStatus = async () => {
   const telemetry = await fetchControllerTelemetry();
+  const base = controllerBaseStatus();
+  const startedAt = getStartedAt();
+  const startedMs = startedAt ? Date.parse(startedAt) : null;
+  const warmupSeconds = startedMs ? Math.max(0, Math.round((Date.now() - startedMs) / 1000)) : null;
+  const inferredRunning = Boolean(telemetry);
 
   return {
-    ...controllerBaseStatus(),
+    ...base,
+    sitl: {
+      ...base.sitl,
+      running: base.sitl.running || inferredRunning,
+      pid: base.sitl.pid ?? await newestPid(SITL_BIN),
+    },
+    controller: {
+      ...base.controller,
+      running: base.controller.running || inferredRunning,
+      pid: base.controller.pid ?? await newestPid(CONTROLLER_PATTERN),
+    },
     controllerReady: Boolean(telemetry),
     gpsReady: hasGpsFix(telemetry),
+    startedAt,
+    warmupSeconds,
+    warmupTimedOut: Boolean(telemetry && !hasGpsFix(telemetry) && warmupSeconds != null && warmupSeconds > 30),
     telemetry,
   };
 };
@@ -254,6 +311,9 @@ export const startSimStack = async ({ lat, lng, alt, heading, offsetMeters, dron
     ...controllerBaseStatus(),
     controllerReady: Boolean(telemetry),
     gpsReady: hasGpsFix(telemetry),
+    startedAt: getStartedAt(),
+    warmupSeconds: 0,
+    warmupTimedOut: false,
     telemetry,
   };
 };
