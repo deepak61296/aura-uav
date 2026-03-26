@@ -8,6 +8,18 @@
 
 ---
 
+## 📸 Screenshots & Demos
+
+### Admin Dashboard (Dark Ops Console)
+![Admin Dashboard](docs/admin.png)
+
+### User App & Final Demo
+![Landing Page](docs/landing.png)
+
+*(Note: WebP recording `docs/demo.webp` is also available in the repository for full workflow demonstration.)*
+
+---
+
 ## 🏗 Architecture
 
 ```
