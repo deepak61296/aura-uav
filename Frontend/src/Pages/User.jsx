@@ -103,7 +103,7 @@ const missionBadgeLabel = (mission) => {
 const isSimulationReady = (status) =>
   Boolean(status?.sitl?.running && status?.controllerReady && status?.gpsReady)
 
-const Home = () => {
+const User = () => {
   const [userLocation, setUserLocation] = useState(null)
   const [droneLocation, setDroneLocation] = useState(null)
   const [booked, setBooked] = useState(false)
@@ -114,8 +114,15 @@ const Home = () => {
   const [missionState, setMissionState] = useState("idle")
   const [mapStyle, setMapStyle] = useState("standard")
   const [simStatus, setSimStatus] = useState(null)
+  const [backendOnline, setBackendOnline] = useState(true)
   const syncLockRef = useRef(null)
   const lastLocationKeyRef = useRef(null)
+  const [toast, setToast] = useState(null)
+
+  const showToast = (msg, type = "error") => {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 4000)
+  }
 
   const readyToConfirm = isSimulationReady(simStatus)
   const confirmDisabledReason = simStatus?.warmupTimedOut 
@@ -155,13 +162,14 @@ const Home = () => {
         headers: { "x-api-key": API_KEY }
       })
       const data = await res.json()
+      setBackendOnline(true)
       if (data) {
         setBooked(Boolean(data.booked))
         setConfirmed(Boolean(data.confirmed))
         setShowPath(Boolean(data.booked || data.confirmed))
       }
-    } catch (err) {
-      console.error("Status fetch error:", err)
+    } catch {
+      setBackendOnline(false)
     }
   }
 
@@ -177,8 +185,8 @@ const Home = () => {
 
       setMissionState(data?.mission || "idle")
       setProgress(computeProgress(data))
-    } catch (err) {
-      console.error("Controller telemetry error:", err)
+    } catch {
+      /* silent — controller may not be running yet */
     }
   }
 
@@ -190,8 +198,8 @@ const Home = () => {
       if (!res.ok) return
       const data = await res.json()
       setSimStatus(data)
-    } catch (err) {
-      console.error("Sim status error:", err)
+    } catch {
+      /* silent */
     }
   }
 
@@ -202,12 +210,16 @@ const Home = () => {
   const handleAction = async (type) => {
     let payload = { droneId: DRONE_ID }
 
+    if (!backendOnline) {
+      showToast("Server is offline. Please start the backend first.")
+      return
+    }
+
     if (type === "confirm" && !readyToConfirm) {
-      if (simStatus?.warmupTimedOut) {
-        window.alert("Drone unavailable right now. Use Restart Drone Simulation and wait for GPS Locked before confirming.")
-      } else {
-        window.alert("We're preparing our drones in the background. Wait for SITL Running, Controller Ready, and GPS Locked before confirming.")
-      }
+      showToast(simStatus?.warmupTimedOut
+        ? "Drone unavailable. Restart Simulation from Admin panel."
+        : "Preparing drones. Please wait for systems to come online."
+      )
       return
     }
 
@@ -224,7 +236,7 @@ const Home = () => {
         }
       } catch (err) {
         console.error("Confirm location error:", err)
-        window.alert("Location access is required before you confirm the delivery.")
+        showToast("Location access is required to confirm delivery.")
         return
       }
     }
@@ -274,84 +286,9 @@ const Home = () => {
       await fetchDashboard()
     } catch (err) {
       console.error(`${type} action failed:`, err)
-      window.alert(err.message || "Action failed")
+      showToast(err.message || "Action failed")
     } finally {
       clearTimeout(safetyTimer)
-      setLoading(false)
-    }
-  }
-
-  const handleSimulationReset = async () => {
-    setLoading(true)
-
-    try {
-      const latestLocation = userLocation || await getBrowserLocation()
-      setUserLocation(latestLocation)
-      await pushLocation(latestLocation)
-
-      const res = await fetch(`${API_URL}/sim/reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-        body: JSON.stringify({
-          droneId: DRONE_ID,
-          lat: latestLocation.lat,
-          lng: latestLocation.lng,
-          alt: latestLocation.altitude,
-        }),
-      })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || "Simulation reset failed")
-      }
-
-      setBooked(false)
-      setConfirmed(false)
-      setShowPath(false)
-      setProgress(0)
-      setMissionState("idle")
-      setDroneLocation(null)
-
-      await fetchDashboard()
-    } catch (err) {
-      console.error("Simulation reset failed:", err)
-      window.alert(err.message || "Simulation reset failed")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSimulationStart = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/sim/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-        body: JSON.stringify({ droneId: DRONE_ID }),
-      })
-      if (!res.ok) throw new Error("Simulation start failed")
-      await fetchDashboard()
-    } catch (err) {
-      console.error(err)
-      window.alert(err.message || "Failed to start simulation")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSimulationStop = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/sim/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
-      })
-      if (!res.ok) throw new Error("Simulation stop failed")
-      await fetchDashboard()
-    } catch (err) {
-      console.error(err)
-      window.alert(err.message || "Failed to stop simulation")
-    } finally {
       setLoading(false)
     }
   }
@@ -399,63 +336,13 @@ const Home = () => {
         </div>
       </div>
 
-      <div className="absolute top-5 left-5 z-[10001] flex flex-wrap gap-2 max-w-[60vw]">
-        <StatusPill
-          label="Drone Link"
-          value={simStatus?.sitl?.running ? "Running" : "Offline"}
-          tone={simStatus?.sitl?.running ? "good" : "bad"}
-        />
-        <StatusPill
-          label="Controller"
-          value={simStatus?.controllerReady ? "Ready" : "Starting"}
-          tone={simStatus?.controllerReady ? "good" : (simStatus?.warmupTimedOut ? "bad" : "warn")}
-        />
-        <StatusPill
-          label="GPS"
-          value={simStatus?.gpsReady ? "Locked" : (simStatus?.warmupTimedOut ? "Timeout" : "Warming")}
-          tone={simStatus?.gpsReady ? "good" : (simStatus?.warmupTimedOut ? "bad" : "warn")}
-        />
-        <StatusPill
-          label="Mission"
-          value={missionBadgeLabel(simStatus?.telemetry?.mission)}
-          tone={simStatus?.telemetry?.mission && simStatus.telemetry.mission !== "idle" ? "warn" : "good"}
-        />
-        <StatusPill
-          label="Battery"
-          value={simStatus?.telemetry?.battery?.level != null ? `${simStatus.telemetry.battery.level}%` : "--"}
-          tone={simStatus?.telemetry?.battery?.level > 20 ? "good" : (simStatus?.telemetry?.battery?.level > 0 ? "bad" : "warn")}
-        />
-        <StatusPill
-          label="Flight Mode"
-          value={simStatus?.telemetry?.mode || "UNKNOWN"}
-          tone={simStatus?.telemetry?.mode && simStatus.telemetry.mode !== "UNKNOWN" ? "good" : "warn"}
-        />
-      </div>
-
-      <div className="absolute bottom-5 right-5 z-[10001] flex flex-col gap-2 p-3 bg-white/90 backdrop-blur rounded-2xl border border-slate-200 shadow-card">
-        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 ml-1">Ops Panel</div>
-        <button
-          type="button"
-          onClick={handleSimulationStart}
-          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 text-left"
-        >
-          Start Sim
-        </button>
-        <button
-          type="button"
-          onClick={handleSimulationReset}
-          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 text-left"
-        >
-          Restart Drone Simulation
-        </button>
-        <button
-          type="button"
-          onClick={handleSimulationStop}
-          className="rounded-full border border-rose-100 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 text-left"
-        >
-          Stop Sim
-        </button>
-      </div>
+      {/* Offline Banner */}
+      {!backendOnline && (
+        <div className="absolute top-5 left-1/2 -translate-x-1/2 z-[10001] bg-rose-600 text-white px-5 py-2.5 rounded-full shadow-xl flex items-center gap-2">
+          <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+          <span className="text-xs font-bold uppercase tracking-wider">Server Offline</span>
+        </div>
+      )}
 
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 z-[10000] w-full max-w-lg px-2 sm:px-4">
         <FloatingInfoCard
@@ -469,6 +356,15 @@ const Home = () => {
           confirmDisabledReason={confirmDisabledReason}
         />
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[20000] px-5 py-3 rounded-xl shadow-xl text-sm font-semibold transition-all ${
+          toast.type === "info" ? "bg-slate-900 text-white" : "bg-rose-600 text-white"
+        }`}>
+          {toast.msg}
+        </div>
+      )}
     </div>
   )
 }
@@ -486,4 +382,4 @@ const StatusPill = ({ label, value, tone }) => (
   </div>
 )
 
-export default Home
+export default User

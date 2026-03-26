@@ -22,6 +22,20 @@ const userDot = L.divIcon({
   iconAnchor: [14, 14],
 })
 
+const homePin = L.divIcon({
+  className: "leaflet-home-icon",
+  html: `<div style="background-color: #1e293b; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">H</div>`,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+})
+
+const deliveryPin = L.divIcon({
+  className: "leaflet-delivery-icon",
+  html: `<div style="background-color: #f97316; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">D</div>`,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+})
+
 const dronePin = new L.Icon({
   iconUrl: DroneIcon,
   iconSize: [48, 48],
@@ -90,27 +104,24 @@ const RecenterMap = ({ dronePos, userPos, active }) => {
   return null
 }
 
-const AnimatedPath = ({ from, to }) => (
-  <>
-    <Polyline
-      positions={[from, to]}
-      pathOptions={{
-        color: "#f8fafc",
-        weight: 7,
-        opacity: 0.35,
-      }}
-    />
-    <Polyline
-      positions={[from, to]}
-      pathOptions={{
-        color: "#ffffff",
-        weight: 3,
-        dashArray: "10 14",
-        lineCap: "round",
-      }}
-    />
-  </>
-)
+const AnimatedPath = ({ from, to, colorType = "outbound" }) => {
+  const pathColor = colorType === "return" ? "#3b82f6" : "#f97316"; // Blue for return, Orange for outbound
+  
+  return (
+    <>
+      <Polyline
+        positions={[from, to]}
+        pathOptions={{
+          color: pathColor,
+          weight: 4,
+          opacity: 0.8,
+          dashArray: "8 8",
+          lineCap: "round",
+        }}
+      />
+    </>
+  )
+}
 
 const BaseLayer = ({ mapStyle }) => {
   if (mapStyle === "standard") {
@@ -136,16 +147,24 @@ const BaseLayer = ({ mapStyle }) => {
   )
 }
 
-const Map = ({ droneLocation, userLocation, showPath, mapStyle }) => {
+const Map = ({ droneLocation, userLocation, showPath, mapStyle, homeLocation, deliveryLocation, missionState }) => {
   const dronePos = droneLocation ? [droneLocation.lat, droneLocation.lng] : null
   const userPos = userLocation ? [userLocation.lat, userLocation.lng] : null
+  const homePos = homeLocation ? [homeLocation.lat, homeLocation.lng] : null
+  const deliveryPos = deliveryLocation ? [deliveryLocation.lat, deliveryLocation.lng] : null
+
   const initialCenter = userPos || dronePos || [28.49505278, 77.05681893]
+  
+  // Decide which path to show and with what color
+  const isReturning = missionState === "climbing" || missionState === "returning_home"
+  const targetPos = isReturning ? homePos : deliveryPos
+  const pathColorType = isReturning ? "return" : "outbound"
 
   return (
     <MapContainer
       center={initialCenter}
       zoom={16}
-      className="h-full w-full"
+      className="h-full w-full z-0"
       scrollWheelZoom
       dragging
       zoomControl={false}
@@ -153,11 +172,14 @@ const Map = ({ droneLocation, userLocation, showPath, mapStyle }) => {
       <BaseLayer mapStyle={mapStyle} />
 
       {userPos && <Marker position={userPos} icon={userDot} />}
-      {dronePos && <Marker position={dronePos} icon={dronePin} />}
+      {homePos && <Marker position={homePos} icon={homePin} />}
+      {deliveryPos && <Marker position={deliveryPos} icon={deliveryPin} />}
+      
+      {dronePos && <Marker position={dronePos} icon={dronePin} zIndexOffset={100} />}
 
-      <RecenterMap dronePos={dronePos} userPos={userPos} active={showPath} />
+      <RecenterMap dronePos={dronePos} userPos={targetPos || userPos} active={showPath} />
 
-      {showPath && dronePos && userPos && <AnimatedPath from={dronePos} to={userPos} />}
+      {showPath && dronePos && targetPos && <AnimatedPath from={dronePos} to={targetPos} colorType={pathColorType} />}
     </MapContainer>
   )
 }

@@ -5,7 +5,7 @@ import { IoClose } from "react-icons/io5"
 import { motion, AnimatePresence } from "framer-motion"
 import DroneIcon from "../assets/icons/Drone_Icon.png"
 
-const FloatingInfoCard = ({ loading, booked, confirmed, progress, missionState, onAction }) => {
+const FloatingInfoCard = ({ loading, booked, confirmed, progress, missionState, onAction, readyToConfirm, confirmDisabledReason }) => {
   const [open, setOpen] = useState(true)
 
   return (
@@ -79,7 +79,7 @@ const FloatingInfoCard = ({ loading, booked, confirmed, progress, missionState, 
           ) : !booked ? (
             <BookingState key="booking" onBook={() => onAction("book")} />
           ) : !confirmed ? (
-            <ConfirmState key="confirm" onConfirm={() => onAction("confirm")} onCancel={() => onAction("reset")} />
+            <ConfirmState key="confirm" onConfirm={() => onAction("confirm")} onCancel={() => onAction("reset")} readyToConfirm={readyToConfirm} confirmDisabledReason={confirmDisabledReason} />
           ) : (
             <TrackingState key="tracking" progress={progress} missionState={missionState} onCancel={() => onAction("reset")} />
           )}
@@ -124,52 +124,72 @@ const LoadingState = () => (
   </motion.div>
 )
 
+const products = [
+  { id: "med1", name: "First Aid Kit", eta: "~5 min", price: "Free", icon: "🩹" },
+  { id: "med2", name: "Blood Units (O+)", eta: "~12 min", price: "Critical", icon: "🩸" },
+  { id: "med3", name: "EpiPen Auto", eta: "~8 min", price: "Free", icon: "💉" }
+]
+
 /* ===== BOOKING STATE — Slide to Book ===== */
-const BookingState = ({ onBook }) => (
-  <motion.div
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    exit={{ opacity: 0, y: -20 }}
-    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-    className="flex flex-col gap-5"
-  >
-    {/* Header */}
-    <div className="pt-1">
-      <h2 className="text-[17px] font-semibold text-slate-900 tracking-tight">Schedule Delivery</h2>
-      <p className="text-[11px] text-slate-400 font-medium mt-0.5">Choose your dispatch method</p>
-    </div>
+const BookingState = ({ onBook }) => {
+  const [selectedProduct, setSelectedProduct] = useState("med1")
 
-    {/* Service card */}
-    <div className="flex items-center gap-4 p-4 bg-slate-50/80 rounded-2xl border border-slate-100/60 group hover:bg-slate-50 transition-colors">
-      <div className="w-13 h-13 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100/50 p-2.5">
-        <img src={DroneIcon} className="w-8 h-8 object-contain" alt="Drone" style={{ animation: "drone-hover 3s ease-in-out infinite" }} />
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="flex flex-col gap-5"
+    >
+      {/* Header */}
+      <div className="pt-1">
+        <h2 className="text-[17px] font-semibold text-slate-900 tracking-tight">Select Medical Product</h2>
+        <p className="text-[11px] text-slate-400 font-medium mt-0.5">Emergency drone dispatch</p>
       </div>
-      <div className="flex-1 min-w-0">
-        <h3 className="text-[15px] font-semibold text-slate-900 tracking-tight">Aura Express</h3>
-        <div className="flex items-center gap-2 mt-1">
-          <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded-full">
-            <div className="w-1 h-1 bg-emerald-500 rounded-full" />
-            <span className="text-[9px] font-semibold text-emerald-600 uppercase tracking-wider">~5 min</span>
+
+      {/* Product List */}
+      <div className="flex flex-col gap-2 max-h-[180px] overflow-y-auto pr-1">
+        {products.map(p => (
+          <div 
+            key={p.id}
+            onClick={() => setSelectedProduct(p.id)}
+            className={`flex items-center gap-4 p-3 rounded-2xl border transition-all cursor-pointer ${
+              selectedProduct === p.id 
+                ? "bg-slate-900 border-slate-900 text-white" 
+                : "bg-slate-50/80 border-slate-100/60 hover:bg-slate-100 text-slate-900"
+            }`}
+          >
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-sm ${
+              selectedProduct === p.id ? "bg-white/20" : "bg-white border border-slate-100/50"
+            }`}>
+              {p.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-[14px] font-semibold tracking-tight">{p.name}</h3>
+              <p className={`text-[10px] font-medium ${selectedProduct === p.id ? "text-slate-300" : "text-slate-500"}`}>
+                ETA: {p.eta}
+              </p>
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-sm font-bold">{p.price}</p>
+            </div>
           </div>
-        </div>
+        ))}
       </div>
-      <div className="text-right flex-shrink-0">
-        <p className="text-lg font-bold text-slate-900">₹0</p>
-        <p className="text-[10px] text-slate-400 font-medium">Free</p>
-      </div>
-    </div>
 
-    {/* Slide to Book */}
-    <SlideToAction
-      label="Slide to Book"
-      onComplete={onBook}
-      variant="dark"
-    />
-  </motion.div>
-)
+      {/* Slide to Book */}
+      <SlideToAction
+        label="Slide to Book"
+        onComplete={onBook}
+        variant="dark"
+      />
+    </motion.div>
+  )
+}
 
 /* ===== CONFIRM STATE — Slide to Authorize ===== */
-const ConfirmState = ({ onConfirm, onCancel }) => (
+const ConfirmState = ({ onConfirm, onCancel, readyToConfirm, confirmDisabledReason }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
@@ -205,11 +225,20 @@ const ConfirmState = ({ onConfirm, onCancel }) => (
       </div>
     </div>
 
-    <SlideToAction
-      label="Slide to Confirm"
-      onComplete={onConfirm}
-      variant="dark"
-    />
+    {readyToConfirm ? (
+      <SlideToAction
+        label="Slide to Confirm"
+        onComplete={onConfirm}
+        variant="dark"
+      />
+    ) : (
+      <div className="flex items-center justify-center p-4 bg-slate-100 rounded-2xl border border-slate-200">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+          <span className="text-[12px] font-semibold text-slate-500">{confirmDisabledReason || "Preparing drone..."}</span>
+        </div>
+      </div>
+    )}
 
     <button
       onClick={onCancel}
@@ -233,6 +262,26 @@ const missionLabels = {
   returning_home: "Returning to base",
   complete: "Delivered",
   reset_failed: "Delivered, waiting for reset",
+}
+
+const timelineStages = [
+  { id: "preflight", label: "Preflight & Assigned", states: ["idle", "starting", "queued"] },
+  { id: "takeoff", label: "Takeoff", states: ["taking_off"] },
+  { id: "en_route", label: "En Route", states: ["flying_to_delivery"] },
+  { id: "drop", label: "Hover & Drop", states: ["descending", "holding_over_delivery", "dropping_parcel"] },
+  { id: "return", label: "Climb & Return", states: ["climbing", "returning_home"] },
+  { id: "landed", label: "Landed & Complete", states: ["complete", "reset_failed"] }
+]
+
+const getTimelineStatus = (currentMissionState, stageStates) => {
+  if (!currentMissionState) return "waiting"
+  const currentIndex = Object.keys(missionLabels).indexOf(currentMissionState)
+  const stageMinIndex = Math.min(...stageStates.map(s => Object.keys(missionLabels).indexOf(s)))
+  const stageMaxIndex = Math.max(...stageStates.map(s => Object.keys(missionLabels).indexOf(s)))
+  
+  if (currentIndex > stageMaxIndex) return "done"
+  if (currentIndex >= stageMinIndex && currentIndex <= stageMaxIndex) return "active"
+  return "waiting"
 }
 
 const TrackingState = ({ progress, missionState, onCancel }) => (
@@ -300,6 +349,36 @@ const TrackingState = ({ progress, missionState, onCancel }) => (
             <img src={DroneIcon} alt="" className="w-4 h-4 object-contain" />
           </div>
         </motion.div>
+      </div>
+    </div>
+
+    {/* Operational Timeline */}
+    <div className="px-2 pt-2 pb-4 flex flex-col gap-3 border-t border-slate-100">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Mission Timeline</div>
+      <div className="flex flex-col gap-3">
+        {timelineStages.map((stage, idx) => {
+          const status = getTimelineStatus(missionState, stage.states)
+          const isDone = status === "done"
+          const isActive = status === "active"
+          
+          return (
+            <div key={stage.id} className="flex gap-3 items-start relative">
+              {idx !== timelineStages.length - 1 && (
+                <div className={`absolute left-[5px] top-[14px] bottom-[-20px] w-[2px] ${isDone ? 'bg-slate-900' : 'bg-slate-100'}`} />
+              )}
+              <div className={`relative z-10 w-3 h-3 rounded-full border-2 ${
+                isDone ? 'bg-slate-900 border-slate-900' :
+                isActive ? 'bg-white border-blue-500' : 'bg-white border-slate-200'
+              } flex-shrink-0 mt-0.5`} />
+              <div className={`text-[12px] font-semibold ${
+                isDone ? 'text-slate-900' :
+                isActive ? 'text-blue-600' : 'text-slate-400'
+              }`}>
+                {stage.label}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
 
