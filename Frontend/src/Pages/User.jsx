@@ -15,9 +15,7 @@ const pushLocation = async (location) => {
         currentAlt: location.altitude,
       }),
     })
-  } catch (error) {
-    console.error("Location sync error:", error)
-  }
+  } catch { /* silent */ }
 }
 
 const normalizeBrowserLocation = (position) => ({
@@ -186,7 +184,7 @@ const User = () => {
       setMissionState(data?.mission || "idle")
       setProgress(computeProgress(data))
     } catch {
-      /* silent — controller may not be running yet */
+      /* silent */
     }
   }
 
