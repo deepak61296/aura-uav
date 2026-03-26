@@ -92,7 +92,10 @@ cd Frontend && npm run dev
 ## 🛰 Connection Modes
 
 ### SITL (Test Mode) — Default
-The backend auto-spawns an ArduPilot SITL instance ~70m from your browser-reported GPS location. No hardware needed.
+The backend auto-spawns an ArduPilot SITL instance ~150m from your browser-reported GPS location. No hardware needed.
+
+> **💡 SITL Configuration:** Aura UAV expects the ArduPilot `arducopter` binary to be compiled on your system. 
+> By default, it looks in `/home/$USER/ardupilot/build/sitl/bin/arducopter`. You can override this path by setting `SITL_BIN=/path/to/arducopter` in your Backend `.env` file.
 
 Click **"▶ Start Simulation"** in the Admin Dashboard to launch.
 

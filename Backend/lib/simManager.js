@@ -6,7 +6,7 @@ const REPO_ROOT = path.resolve(process.cwd(), "..");
 const SITL_BIN = process.env.SITL_BIN || "/home/deepak/ardupilot/build/sitl/bin/arducopter";
 const SITL_DEFAULTS =
   process.env.SITL_DEFAULTS || "/home/deepak/ardupilot/Tools/autotest/default_params/copter.parm";
-const SITL_OFFSET_METERS = Number(process.env.AURA_SITL_OFFSET_METERS || 70);
+const SITL_OFFSET_METERS = Number(process.env.AURA_SITL_OFFSET_METERS || 150);
 const SITL_ALT = Number(process.env.AURA_SITL_ALT || 243.95);
 const SITL_HEADING = Number(process.env.AURA_SITL_HEADING || 90);
 const SITL_UDP_TARGET = process.env.AURA_SITL_UDP_TARGET || "127.0.0.1:14550";

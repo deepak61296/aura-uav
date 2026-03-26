@@ -233,18 +233,23 @@ const Admin = () => {
             <div>
               <div className="text-[9px] font-bold uppercase tracking-[0.25em] text-slate-500 mb-2 ml-1">Operations</div>
               <div className="flex flex-col gap-2">
-                <button onClick={handleSimulationStart} disabled={opsLoading}
-                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white transition">
-                  ▶ Start Simulation
-                </button>
-                <button onClick={handleSimulationReset} disabled={opsLoading}
-                  className="rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white transition">
-                  ↻ Restart Drone
-                </button>
-                <button onClick={handleSimulationStop} disabled={opsLoading}
-                  className="rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white transition">
-                  ■ Stop Simulation
-                </button>
+                {!simStatus?.sitl?.running ? (
+                  <button onClick={handleSimulationStart} disabled={opsLoading}
+                    className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white transition">
+                    ▶ Start Simulation
+                  </button>
+                ) : (
+                  <>
+                    <button onClick={handleSimulationReset} disabled={opsLoading}
+                      className="rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white transition">
+                      ↻ Restart Drone
+                    </button>
+                    <button onClick={handleSimulationStop} disabled={opsLoading}
+                      className="rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-50 px-4 py-2.5 text-xs font-bold text-white transition">
+                      ■ Stop Simulation
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
